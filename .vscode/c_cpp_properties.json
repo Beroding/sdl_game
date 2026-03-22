@@ -1,18 +1,13 @@
 {
     "configurations": [
         {
-            "name": "Win32",
+            "name": "UCRT64",
             "includePath": [
-                "${workspaceFolder}/**"
+                "C:/msys64/ucrt64/include",
+                "C:/msys64/ucrt64/include/SDL3",
+                "C:/msys64/ucrt64/include/SDL3_image"
             ],
-            "defines": [
-                "_DEBUG",
-                "UNICODE",
-                "_UNICODE"
-            ],
-            "compilerPath": "C:\\msys64\\ucrt64\\bin\\gcc.exe",
-            "cStandard": "c17",
-            "cppStandard": "gnu++17",
+            "compilerPath": "C:/msys64/ucrt64/bin/gcc.exe",
             "intelliSenseMode": "windows-gcc-x64"
         }
     ],

@@ -2,14 +2,13 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <SDL3/SDL_main.h>
 #include <SDL3_image/SDL_image.h>
 
 #define SDL_FLAGS SDL_INIT_VIDEO
 
-#define WINDOW_TITLE "Closed Window"
-#define WINDOW_WIDTH 800
-#define WINDOW_HEIGHT 700
+#define WINDOW_TITLE "something sumting"
+#define WINDOW_WIDTH 1500
+#define WINDOW_HEIGHT 900
 
 struct Game 
 {
@@ -17,7 +16,9 @@ struct Game
     SDL_Renderer *renderer;
     SDL_Texture* player_texture;
     SDL_Event event;
-    bool isRunning; 
+    bool isRunning;
+    int frame_counter;
+    int next_frame;
 };
 
 bool game_init_sdl(struct Game *g);
@@ -36,13 +37,6 @@ bool game_init_sdl(struct Game *g)
     }
     printf("SDL Initialized\n");
 
-    // ✅ INIT SDL_image
-    if (!IMG_Init(0))
-    {
-        fprintf(stderr, "Error initializing SDL_image: %s\n", SDL_GetError());
-        return false;
-    }//
-
     g->window = SDL_CreateWindow(WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT, 0);
     if(!g->window)
     {
@@ -50,6 +44,7 @@ bool game_init_sdl(struct Game *g)
         return false;
     }
     printf("Window created\n");
+    SDL_SetWindowResizable(g->window, true);
 
     g->renderer = SDL_CreateRenderer(g->window, "opengl");
     if(!g->renderer) 
@@ -92,6 +87,8 @@ bool game_new(struct Game **game)
     printf("game_init_sdl SUCCESS\n");
 
     g->isRunning = true;
+    g->frame_counter = 0;
+    g->next_frame = 0;
 
     return true;
 }
@@ -119,8 +116,6 @@ void game_free(struct Game **game)
             SDL_DestroyWindow(g->window);
             g->window = NULL;
         }
-
-        IMG_Quit();
 
         SDL_Quit();
 
@@ -152,12 +147,23 @@ void game_draw(struct Game *g)
     SDL_SetRenderDrawColor(g->renderer, 255, 255, 0, 255);
     SDL_RenderClear(g->renderer);
     
-    // SDL_RenderPresent(g->renderer);
-    // ✅ Draw texture
-    SDL_FRect dst = {100, 100, 128, 128}; // position + size
-    SDL_RenderTexture(g->renderer, g->player_texture, NULL, &dst);
+    g->frame_counter++;
+    if (g->frame_counter >= 10) // change every ~160ms (16ms loop)
+    {
+        g->frame_counter = 0;
+        g->next_frame += 16;
+        if (g->next_frame > 81) // wrap at last frame x=81
+        {
+            g->next_frame = 0;
+        }
+    }
 
-    SDL_RenderPresent(g->renderer);//
+    SDL_FRect char_sprite = {1 + g->next_frame, 0, 15, 16}; // {x, y, width, height} on the spritesheet
+    SDL_FRect char_position = {100, 100, 64, 64}; // {x, y, width, height} on the screen
+    SDL_SetTextureScaleMode(g->player_texture, SDL_SCALEMODE_NEAREST);
+    SDL_RenderTexture(g->renderer, g->player_texture, &char_sprite, &char_position);
+    
+    SDL_RenderPresent(g->renderer);
 }
 
 void game_run(struct Game *g) 
@@ -197,54 +203,3 @@ int main(void)
 
     return exit_status;
 }
-// ###################################################################################################
-// #define SDL_MAIN_USE_CALLBACKS
-// #include <SDL3/SDL_main.h>
-// #include <SDL3/SDL.h>
-
-// SDL_Window* window;
-// SDL_Renderer* renderer;
-// SDL_Event event;
-
-// void SDL_AppQuit(void *appstate, SDL_AppResult result){
-//     SDL_DestroyRenderer(renderer);
-//     renderer = NULL;
-//     SDL_DestroyWindow(window);
-//     window = NULL;
-//     SDL_QuitSubSystem(SDL_INIT_VIDEO);
-// }
-
-// SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
-//     if (event->type == SDL_EVENT_QUIT) {
-//         return SDL_APP_SUCCESS;
-//     }
-//     return SDL_APP_CONTINUE;
-// }
-
-// void update() {
-
-// }
-
-// void render() {
-//     SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);  // ← Set color FIRST
-//     SDL_RenderClear(renderer);                         // ← Then clear with that color
-//     SDL_RenderPresent(renderer);
-// }
-
-// SDL_AppResult SDL_AppIterate(void *appstate) {
-//     update();
-//     render();
-//     return SDL_APP_CONTINUE;
-// }
-
-// SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
-//     if (!SDL_Init(SDL_INIT_VIDEO)) {
-//         SDL_Log("Error initializing SDL: %s", SDL_GetError());
-//         return SDL_APP_FAILURE;
-//     }
-
-//     const char path[] = " ./knight_idle_spritesheet.png";
-//     player_texture = IMG_LoadTexture(renderer, path);
-
-//     return SDL_APP_CONTINUE;
-// }
