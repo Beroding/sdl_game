@@ -10,6 +10,7 @@
 you should see something like:
 - mingw-w64-ucrt-x86_64-sdl3
 - mingw-w64-ucrt-x86_64-sdl3-image
+- mingw-w64-ucrt-x86_64-sdl3-ttf
 
 6. install the package above
 run "pacman -S mingw-w64-ucrt-x86_64-sdl3 mingw-w64-ucrt-x86_64-sdl3-image mingw-w64-ucrt-x86_64-sdl3-ttf"
