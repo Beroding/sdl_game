@@ -12,6 +12,8 @@ typedef struct {
     SDL_FRect option_rects[4];
     int selected;
     int option_count;
+    SDL_Texture *game_title_text;
+    TTF_Font *game_title_font;
 } Menu;
 
 Menu *menu_create(SDL_Renderer *renderer, int window_width, int window_height);
