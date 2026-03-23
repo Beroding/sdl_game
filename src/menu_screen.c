@@ -37,8 +37,8 @@ Menu *menu_create(SDL_Renderer *renderer, int window_width, int window_height) {
     float option_w = 360;
     float option_h = 64;
     float option_x = (window_width - option_w) / 2.0f;
-    float start_y = window_height * 0.47f;
-    float spacing = 84;
+    float start_y = window_height * 1.0f;
+    float spacing = 85;
 
     for (int i = 0; i < menu->option_count; i++) {
         menu->option_rects[i].x = option_x;
@@ -60,6 +60,14 @@ Menu *menu_create(SDL_Renderer *renderer, int window_width, int window_height) {
         return NULL;
     }
 
+    menu->game_title_font = TTF_OpenFont("game_assets/MedievalSharp-Regular.ttf", 96);
+    if (!menu->game_title_font) { 
+        fprintf(stderr, "Title font load error: %s\n", SDL_GetError());
+        TTF_CloseFont(menu->font);
+        free(menu);
+        return NULL;
+    }
+
     const char *labels[4] = {"CONTINUE", "NEW GAME", "CREDIT", "QUIT"};
     for (int i = 0; i < 4; i++) {
         SDL_Color c = {255,255,255,255};
@@ -72,8 +80,13 @@ Menu *menu_create(SDL_Renderer *renderer, int window_width, int window_height) {
         menu->option_rects[i].w = w;
         menu->option_rects[i].h = h;
         menu->option_rects[i].x = (window_width - w) / 2.0f;
-        menu->option_rects[i].y = 300 + i * 80;
+        menu->option_rects[i].y = 500 + i * 80;
     }
+
+    SDL_Color white = {255, 255, 255, 255};
+    SDL_Surface *title_surf = TTF_RenderText_Blended(menu->game_title_font, "SOMETHING SUMTING", 0, white);
+    menu->game_title_text = SDL_CreateTextureFromSurface(renderer, title_surf);
+    SDL_DestroySurface(title_surf);
 
     return menu;
 }
@@ -91,6 +104,16 @@ void menu_render(SDL_Renderer *renderer, Menu *menu) {
         }
         SDL_RenderTexture(renderer, menu->item_text[i], NULL, &menu->option_rects[i]);
     }
+
+    float w, h;
+    SDL_GetTextureSize(menu->game_title_text, &w, &h);
+    SDL_FRect title_rect = {
+        .x = (1500 - w) / 2,
+        .y = 80,
+        .w = w,
+        .h = h
+    };
+    SDL_RenderTexture(renderer, menu->game_title_text, NULL, &title_rect);
 }
 
 int menu_handle_click(Menu *menu, float mouse_x, float mouse_y) {
