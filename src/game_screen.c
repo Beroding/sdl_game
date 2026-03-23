@@ -44,7 +44,7 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     }
     
     gs->bg_texture = SDL_CreateTextureFromSurface(renderer, surface);
-    SDL_SetTextureScaleMode(gs->bg_texture, SDL_SCALEMODE_PIXELART);
+    SDL_SetTextureScaleMode(gs->bg_texture, SDL_SCALEMODE_NEAREST);
     SDL_DestroySurface(surface);
 
     if (!gs->bg_texture) {
@@ -56,7 +56,7 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     printf("Map size: %dx%d\n", gs->map_width, gs->map_height);
 
     // LOAD IDLE SPRITE SHEET
-    SDL_Surface *idle_surface = IMG_Load("assets/heroes/knight/knight_idle_spritesheet.png");
+    SDL_Surface *idle_surface = IMG_Load("game_assets/knight_idle_spritesheet.png");
     if (!idle_surface) {
         fprintf(stderr, "Failed to load idle sprite: %s\n", SDL_GetError());
     } else {
@@ -66,7 +66,7 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     }
 
     // LOAD RUN SPRITE SHEET
-    SDL_Surface *run_surface = IMG_Load("assets/heroes/knight/knight_run_spritesheet.png");
+    SDL_Surface *run_surface = IMG_Load("game_assets/knight_run_spritesheet.png");
     if (!run_surface) {
         fprintf(stderr, "Failed to load run sprite: %s\n", SDL_GetError());
     } else {
