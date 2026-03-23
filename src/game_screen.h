@@ -6,11 +6,22 @@
 #include <stdbool.h>
 
 typedef struct {
+    float x, y;        // Camera position (top-left corner)
+    float zoom;        // Zoom level (2.0 = 2x zoom)
+    int viewport_w;    // Screen width
+    int viewport_h;    // Screen height
+} Camera;
+
+typedef struct {
     // Game world data
     float player_x;
     float player_y;
     int score;
     int level;
+    
+    // Map data
+    int map_width;     // Original map image width
+    int map_height;    // Original map image height
     
     // Movement state
     bool moving_left;
@@ -22,7 +33,10 @@ typedef struct {
     int frame_counter;
     int current_frame;
     bool facing_right;
-    bool is_moving;  // true if moving in ANY direction
+    bool is_moving;
+    
+    // Camera
+    Camera camera;
     
     // Visuals
     SDL_Texture *bg_texture;
