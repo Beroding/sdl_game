@@ -1,11 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 #include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include "game_screen.h"
+
+#define FRAME_WIDTH 15
+#define FRAME_HEIGHT 16
+#define FRAME_COUNT 6
+#define ANIMATION_SPEED 6
+#define MOVE_SPEED 4.0f
 
 GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int window_height) {
     GameScreen *gs = calloc(1, sizeof(GameScreen));
@@ -15,7 +22,7 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     }
 
     // Load background
-    SDL_Surface *surface = IMG_Load("assets/tiles/floor/floor_stair.png");
+    SDL_Surface *surface = IMG_Load("game_assets/map_1.jpg");
     if (!surface) {
         surface = SDL_CreateSurface(window_width, window_height, SDL_PIXELFORMAT_RGBA8888);
         SDL_FillSurfaceRect(surface, NULL, SDL_MapRGBA(SDL_GetPixelFormatDetails(surface->format), NULL, 20, 40, 60, 255));
@@ -31,19 +38,24 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
         return NULL;
     }
 
-    // LOAD PLAYER SPRITE SHEET
-    SDL_Surface *player_surface = IMG_Load("knight_idle_spritesheet.png");
-    if (!player_surface) {
-        fprintf(stderr, "Failed to load player sprite: %s\n", SDL_GetError());
-        // Continue without player texture - will just not render player
+    // LOAD IDLE SPRITE SHEET
+    SDL_Surface *idle_surface = IMG_Load("assets/heroes/knight/knight_idle_spritesheet.png");
+    if (!idle_surface) {
+        fprintf(stderr, "Failed to load idle sprite: %s\n", SDL_GetError());
     } else {
-        gs->player_texture = SDL_CreateTextureFromSurface(renderer, player_surface);
-        SDL_SetTextureScaleMode(gs->player_texture, SDL_SCALEMODE_NEAREST); // Set once here
-        SDL_DestroySurface(player_surface);
-        
-        if (!gs->player_texture) {
-            fprintf(stderr, "Failed to create player texture: %s\n", SDL_GetError());
-        }
+        gs->idle_texture = SDL_CreateTextureFromSurface(renderer, idle_surface);
+        SDL_SetTextureScaleMode(gs->idle_texture, SDL_SCALEMODE_NEAREST);
+        SDL_DestroySurface(idle_surface);
+    }
+
+    // LOAD RUN SPRITE SHEET
+    SDL_Surface *run_surface = IMG_Load("assets/heroes/knight/knight_run_spritesheet.png");
+    if (!run_surface) {
+        fprintf(stderr, "Failed to load run sprite: %s\n", SDL_GetError());
+    } else {
+        gs->run_texture = SDL_CreateTextureFromSurface(renderer, run_surface);
+        SDL_SetTextureScaleMode(gs->run_texture, SDL_SCALEMODE_NEAREST);
+        SDL_DestroySurface(run_surface);
     }
 
     // Load font for HUD
@@ -51,13 +63,23 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     if (!gs->font) {
         fprintf(stderr, "Game font load error: %s\n", SDL_GetError());
         SDL_DestroyTexture(gs->bg_texture);
-        SDL_DestroyTexture(gs->player_texture); // Clean up player texture too
+        SDL_DestroyTexture(gs->idle_texture);
+        SDL_DestroyTexture(gs->run_texture);
         free(gs);
         return NULL;
     }
 
+    // Animation state
     gs->frame_counter = 0;
-    gs->next_frame = 0;
+    gs->current_frame = 0;
+    gs->facing_right = true;
+    gs->is_moving = false;
+    
+    // Movement flags
+    gs->moving_left = false;
+    gs->moving_right = false;
+    gs->moving_up = false;  
+    gs->moving_down = false;
 
     // Create "GAME RUNNING" title
     SDL_Color white = {255, 255, 255, 255};
@@ -71,12 +93,6 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     gs->score = 0;
     gs->level = 1;
 
-    // Player rectangle (placeholder for sprite)
-    gs->player_rect.w = 50;
-    gs->player_rect.h = 50;
-    gs->player_rect.x = gs->player_x - 25;
-    gs->player_rect.y = gs->player_y - 25;
-
     printf("Game screen created\n");
     return gs;
 }
@@ -84,9 +100,36 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
 void game_screen_update(GameScreen *gs, float delta_time) {
     if (!gs) return;
     
-    // Update rect position based on player position
-    gs->player_rect.x = gs->player_x - 25;
-    gs->player_rect.y = gs->player_y - 25;
+    // Check if moving in any direction
+    gs->is_moving = gs->moving_left || gs->moving_right || 
+                    gs->moving_up || gs->moving_down;
+    
+    // Update animation frame when moving
+    if (gs->is_moving) {
+        gs->frame_counter++;
+        if (gs->frame_counter >= ANIMATION_SPEED) {
+            gs->frame_counter = 0;
+            gs->current_frame = (gs->current_frame + 1) % FRAME_COUNT;
+        }
+    } else {
+        // Reset to idle frame when standing still
+        gs->current_frame = 0;
+        gs->frame_counter = 0;
+    }
+    
+    // Apply movement
+    if (gs->moving_right) {
+        gs->player_x += MOVE_SPEED;
+    }
+    if (gs->moving_left) {
+        gs->player_x -= MOVE_SPEED;
+    }
+    if (gs->moving_up) {
+        gs->player_y -= MOVE_SPEED;
+    }
+    if (gs->moving_down) {
+        gs->player_y += MOVE_SPEED;
+    }
 }
 
 void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
@@ -95,25 +138,30 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
     // Draw background
     SDL_RenderTexture(renderer, gs->bg_texture, NULL, NULL);
 
-    // Animate player sprite
-    gs->frame_counter++;
-    if (gs->frame_counter >= 10) // change every ~160ms (16ms loop)
-    {
-        gs->frame_counter = 0;
-        gs->next_frame += 16;
-        if (gs->next_frame > 81) // wrap at last frame x=81
-        {
-            gs->next_frame = 0;
-        }
-    }
-
-    // Draw player (only if texture exists)
-    if (gs->player_texture) {
-        SDL_FRect char_sprite = {1 + gs->next_frame, 0, 15, 16}; // Sprite sheet source rect
-        SDL_FRect char_position = {gs->player_x - 32, gs->player_y - 32, 64, 64}; // Use player position!
+    // Use run texture when moving, idle when standing still
+    SDL_Texture *current_texture = gs->is_moving ? gs->run_texture : gs->idle_texture;
+    
+    if (current_texture) {
+        // Calculate source rect for current frame
+        SDL_FRect src_rect = {
+            .x = 1.0f + (gs->current_frame * 16.0f),
+            .y = 0,
+            .w = FRAME_WIDTH,
+            .h = FRAME_HEIGHT
+        };
         
-        // Remove SDL_SetTextureScaleMode from here - already set in create
-        SDL_RenderTexture(renderer, gs->player_texture, &char_sprite, &char_position);
+        // Destination rect on screen
+        SDL_FRect dst_rect = {
+            .x = gs->player_x - 32,
+            .y = gs->player_y - 32,
+            .w = 64,
+            .h = 64
+        };
+        
+        // Flip based on last horizontal direction faced
+        SDL_FlipMode flip = gs->facing_right ? SDL_FLIP_NONE : SDL_FLIP_HORIZONTAL;
+        
+        SDL_RenderTextureRotated(renderer, current_texture, &src_rect, &dst_rect, 0.0, NULL, flip);
     }
 
     // Draw title text at top
@@ -129,27 +177,35 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
 }
 
 void game_screen_handle_input(GameScreen *gs, SDL_KeyboardEvent *key) {
-    if (!gs || key->repeat) return;
+    if (!gs) return;
 
-    const float speed = 10.0f;
+    bool is_pressed = (key->type == SDL_EVENT_KEY_DOWN);
 
     switch (key->scancode) {
-        case SDL_SCANCODE_W:
-        case SDL_SCANCODE_UP:
-            gs->player_y -= speed;
-            break;
-        case SDL_SCANCODE_S:
-        case SDL_SCANCODE_DOWN:
-            gs->player_y += speed;
-            break;
-        case SDL_SCANCODE_A:
-        case SDL_SCANCODE_LEFT:
-            gs->player_x -= speed;
-            break;
+        // Horizontal movement - updates facing direction
         case SDL_SCANCODE_D:
         case SDL_SCANCODE_RIGHT:
-            gs->player_x += speed;
+            gs->moving_right = is_pressed;
+            if (is_pressed) gs->facing_right = true;
             break;
+            
+        case SDL_SCANCODE_A:
+        case SDL_SCANCODE_LEFT:
+            gs->moving_left = is_pressed;
+            if (is_pressed) gs->facing_right = false;
+            break;
+            
+        // Vertical movement - does NOT change facing direction
+        case SDL_SCANCODE_W:
+        case SDL_SCANCODE_UP:
+            gs->moving_up = is_pressed;
+            break;
+            
+        case SDL_SCANCODE_S:
+        case SDL_SCANCODE_DOWN:
+            gs->moving_down = is_pressed;
+            break;
+            
         default:
             break;
     }
@@ -160,7 +216,8 @@ void game_screen_destroy(GameScreen *gs) {
         if (gs->title_text) SDL_DestroyTexture(gs->title_text);
         if (gs->font) TTF_CloseFont(gs->font);
         if (gs->bg_texture) SDL_DestroyTexture(gs->bg_texture);
-        if (gs->player_texture) SDL_DestroyTexture(gs->player_texture); // Clean up player texture
+        if (gs->idle_texture) SDL_DestroyTexture(gs->idle_texture);
+        if (gs->run_texture) SDL_DestroyTexture(gs->run_texture);
         free(gs);
         printf("Game screen destroyed\n");
     }
