@@ -12,10 +12,15 @@ you should see something like:
 - mingw-w64-ucrt-x86_64-sdl3-image
 
 6. install the package above
-run "pacman -S mingw-w64-ucrt-x86_64-sdl3 mingw-w64-ucrt-x86_64-sdl3-image"
+run "pacman -S mingw-w64-ucrt-x86_64-sdl3 mingw-w64-ucrt-x86_64-sdl3-image mingw-w64-ucrt-x86_64-sdl3-ttf"
 note: might have slight name difference so dont just copy and paste
 
-7. install make
+7. add some file from "msys64/ucrt64/bin" (if you download the zip file it will be in the bin folder)
+- SDL3.dll
+- SDL3_image.dll
+- SDL3_ttf.dll
+
+8. install make
 run "pacman -S make"
 
-8. add it to new terminal profile in vscode (until i know how to write it this part will remain like this, i dont know how to explain it)
+9. add it to new terminal profile in vscode (until i know how to write it this part will remain like this, i dont know how to explain it)
