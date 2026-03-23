@@ -1,8 +1,12 @@
-#include <SDL3/SDL.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
+
+#include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
+#include <SDL3_ttf/SDL_ttf.h>
+
+#include "menu_screen.h"
 
 #define SDL_FLAGS SDL_INIT_VIDEO
 
@@ -14,11 +18,9 @@ struct Game
 {
     SDL_Window *window;
     SDL_Renderer *renderer;
-    SDL_Texture* player_texture;
+    Menu *menu;
     SDL_Event event;
     bool isRunning;
-    int frame_counter;
-    int next_frame;
 };
 
 bool game_init_sdl(struct Game *g);
@@ -37,6 +39,13 @@ bool game_init_sdl(struct Game *g)
     }
     printf("SDL Initialized\n");
 
+    if (TTF_Init() == false) 
+    {
+        fprintf(stderr, "TTF_Init failed: %s\n", SDL_GetError());
+        return false;
+    }
+    printf("SDL_ttf Initialized\n");
+
     g->window = SDL_CreateWindow(WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT, 0);
     if(!g->window)
     {
@@ -46,7 +55,7 @@ bool game_init_sdl(struct Game *g)
     printf("Window created\n");
     SDL_SetWindowResizable(g->window, true);
 
-    g->renderer = SDL_CreateRenderer(g->window, "opengl");
+    g->renderer = SDL_CreateRenderer(g->window, NULL);
     if(!g->renderer) 
     {
         printf("Error creating renderer: %s\n", SDL_GetError());
@@ -54,17 +63,13 @@ bool game_init_sdl(struct Game *g)
     }
     printf("Renderer created\n");
 
-    //
-    const char *path = "./knight_idle_spritesheet.png";
-
-    g->player_texture = IMG_LoadTexture(g->renderer, path);
-    if (!g->player_texture)
+    g->menu = menu_create(g->renderer, WINDOW_WIDTH, WINDOW_HEIGHT);
+    if (!g->menu)
     {
-        fprintf(stderr, "Error loading texture: %s\n", SDL_GetError());
+        printf("menu_create failed\n");
         return false;
     }
-
-    printf("Texture loaded\n");//
+    printf("Menu created\n");
 
     return true;
 }
@@ -82,13 +87,13 @@ bool game_new(struct Game **game)
 
     if(!game_init_sdl(g))
     {
+        free(g);
+        *game = NULL;
         return false;
     }
     printf("game_init_sdl SUCCESS\n");
 
     g->isRunning = true;
-    g->frame_counter = 0;
-    g->next_frame = 0;
 
     return true;
 }
@@ -99,11 +104,7 @@ void game_free(struct Game **game)
     {
         struct Game *g = *game;
 
-        if(g->player_texture)
-        {
-            SDL_DestroyTexture(g->player_texture);
-            g->player_texture = NULL;
-        }
+        menu_destroy(g->menu);
 
         if(g->renderer) 
         {
@@ -117,6 +118,7 @@ void game_free(struct Game **game)
             g->window = NULL;
         }
 
+        TTF_Quit();
         SDL_Quit();
 
         free(g);
@@ -136,6 +138,29 @@ void game_events(struct Game *g)
             case SDL_EVENT_QUIT:
                 g->isRunning = false;
                 break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            {
+                int index = menu_handle_click(g->menu, g->event.button.x, g->event.button.y);
+                if (index >= 0)
+                {
+                    printf("menu option click index=%d\n", index);
+                    if (index == 3) g->isRunning = false; // Quit
+                }
+            }
+                break;
+            case SDL_EVENT_KEY_DOWN:
+            {
+                int index = menu_handle_key(g->menu, &g->event.key);
+                if (index >= 0)
+                {
+                    printf("menu option enter index=%d\n", index);
+                    if (index == 0) printf("Continue selected\n");
+                    else if (index == 1) printf("New Game selected\n");
+                    else if (index == 2) printf("Credit selected\n");
+                    else if (index == 3) g->isRunning = false;
+                }
+            }
+                break;
             default:
                 break;
         }
@@ -144,24 +169,12 @@ void game_events(struct Game *g)
 
 void game_draw(struct Game *g)
 {
-    SDL_SetRenderDrawColor(g->renderer, 255, 255, 0, 255);
+    SDL_SetRenderDrawColor(g->renderer, 0, 0, 0, 255);
     SDL_RenderClear(g->renderer);
     
-    g->frame_counter++;
-    if (g->frame_counter >= 10) // change every ~160ms (16ms loop)
-    {
-        g->frame_counter = 0;
-        g->next_frame += 16;
-        if (g->next_frame > 81) // wrap at last frame x=81
-        {
-            g->next_frame = 0;
-        }
+    if(g-> menu){
+        menu_render(g->renderer, g->menu);
     }
-
-    SDL_FRect char_sprite = {1 + g->next_frame, 0, 15, 16}; // {x, y, width, height} on the spritesheet
-    SDL_FRect char_position = {100, 100, 64, 64}; // {x, y, width, height} on the screen
-    SDL_SetTextureScaleMode(g->player_texture, SDL_SCALEMODE_NEAREST);
-    SDL_RenderTexture(g->renderer, g->player_texture, &char_sprite, &char_position);
     
     SDL_RenderPresent(g->renderer);
 }
