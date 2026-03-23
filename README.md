@@ -25,3 +25,5 @@ note: might have slight name difference so dont just copy and paste
 run "pacman -S make"
 
 9. add it to new terminal profile in vscode (until i know how to write it this part will remain like this, i dont know how to explain it)
+
+10. open ucrt64 terminal and run "make"
