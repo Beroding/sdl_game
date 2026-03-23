@@ -185,10 +185,16 @@ void game_events(struct Game *g)
     {
         switch (g->event.type) 
         {
+            case SDL_EVENT_KEY_UP:
+                if (g->state == STATE_PLAYING && g->game_screen) {
+                    game_screen_handle_input(g->game_screen, &g->event.key);
+                }
+                break;
+
             case SDL_EVENT_QUIT:
                 g->isRunning = false;
                 break;
-                
+
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
                 if (g->state == STATE_MENU) {
                     int index = menu_handle_click(g->menu, g->event.button.x, g->event.button.y);
@@ -203,7 +209,7 @@ void game_events(struct Game *g)
                     }
                 }
                 break;
-                
+
             case SDL_EVENT_KEY_DOWN:
                 if (g->state == STATE_MENU) {
                     int index = menu_handle_key(g->menu, &g->event.key);
@@ -230,7 +236,7 @@ void game_events(struct Game *g)
                     return_to_menu(g);
                 }
                 break;
-                
+
             default:
                 break;
         }

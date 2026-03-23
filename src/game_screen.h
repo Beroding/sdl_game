@@ -3,6 +3,7 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
+#include <stdbool.h>
 
 typedef struct {
     // Game world data
@@ -10,17 +11,25 @@ typedef struct {
     float player_y;
     int score;
     int level;
+    
+    // Movement state
+    bool moving_left;
+    bool moving_right;
+    bool moving_up;
+    bool moving_down;
+    
+    // Animation
     int frame_counter;
-    int next_frame;
+    int current_frame;
+    bool facing_right;
+    bool is_moving;  // true if moving in ANY direction
     
     // Visuals
     SDL_Texture *bg_texture;
+    SDL_Texture *idle_texture;
+    SDL_Texture *run_texture;
     TTF_Font *font;
     SDL_Texture *title_text;
-    
-    // Layout
-    SDL_FRect player_rect;
-    SDL_Texture *player_texture;
 } GameScreen;
 
 GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int window_height);
