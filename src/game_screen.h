@@ -24,8 +24,9 @@ typedef struct {
 
 
     // NPC data
-    int npc_frame;//first npc
-    int npc_frame_counter;//first npc
+    int npc_frame;
+    float npc_frame_timer;  // Changed: use float for smoother timing
+    float npc_frame_duration;  // NEW: time per frame
     
     // Map data
     int map_width;     // Original map image width
