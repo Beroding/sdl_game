@@ -10,9 +10,11 @@
 
 #define FRAME_WIDTH 15
 #define FRAME_HEIGHT 16
+#define NPC_FRAME_WIDTH 64
+#define NPC_FRAME_HEIGHT 52
 #define FRAME_COUNT 6
-#define ANIMATION_SPEED 6
-#define MOVE_SPEED 1.0f
+#define ANIMATION_SPEED 5
+#define MOVE_SPEED 1.2f
 #define ZOOM_LEVEL 5.0f  // 4x zoom
 #define CAMERA_SMOOTH 0.1f  // Lower = smoother but more lag (0.0-1.0)
 
@@ -86,6 +88,16 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
         return NULL;
     }
 
+    // Load Interactable NPC With Idle Animation
+    SDL_Surface *npc_surface = IMG_Load("game_assets/npc1_idle.png");
+    if (!npc_surface) {
+        fprintf(stderr, "Failed to load NPC sprite: %s\n", SDL_GetError());
+    } else {
+        gs->npc_idle_texture = SDL_CreateTextureFromSurface(renderer, npc_surface);
+        SDL_SetTextureScaleMode(gs->npc_idle_texture, SDL_SCALEMODE_NEAREST);
+        SDL_DestroySurface(npc_surface);
+    }
+
     // Animation state
     gs->frame_counter = 0;
     gs->current_frame = 0;
@@ -116,6 +128,15 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     gs->player_y = gs->map_height / 2.0f;
     gs->score = 0;
     gs->level = 1;
+
+    // Set NPC spawn (near player)
+    gs->npc_x = gs->player_x + 35; // slightly to the right
+    gs->npc_y = gs->player_y;
+
+    gs->npc_frame = 0;
+    gs->npc_frame_counter = 0;
+    gs->npc_facing_right = false;
+    gs->player_near_npc = false;
 
     printf("Game screen created\n");
     return gs;
@@ -178,6 +199,29 @@ void game_screen_update(GameScreen *gs, float delta_time) {
     // Clamp player to map bounds
     gs->player_x = clamp(gs->player_x, 0, gs->map_width);
     gs->player_y = clamp(gs->player_y, 0, gs->map_height);
+
+    // Update NPC Animation
+    gs->npc_frame_counter++;
+    if (gs->npc_frame_counter >= ANIMATION_SPEED) {
+        gs->npc_frame_counter = 0;
+        gs->npc_frame = (gs->npc_frame + 1) % FRAME_COUNT;
+    }
+
+    // Update NPC Animation Direction
+    if (gs->player_x < gs->npc_x) {
+        gs->npc_facing_right = false;
+    } else {
+        gs->npc_facing_right = true;
+    }
+    
+    // NPC Interaction Range
+    float dx = gs->player_x - gs->npc_x;
+    float dy = gs->player_y - gs->npc_y;
+    float distance_sq = dx*dx + dy*dy;
+
+    gs->player_near_npc = (distance_sq < 40 * 40); // NPC Radius 40
+
+
     
     // Update camera to follow player
     update_camera(gs);
@@ -223,6 +267,35 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
     float screen_x = (gs->player_x * cam->zoom) - cam->x;
     float screen_y = (gs->player_y * cam->zoom) - cam->y;
 
+    // Calculate NPC screen position
+    float npc_screen_x = (gs->npc_x * cam->zoom) - cam->x;
+    float npc_screen_y = (gs->npc_y * cam->zoom) - cam->y;
+
+    float sprite_size = 16 * cam->zoom;
+
+    // =========================
+    // DRAW NPC (BEFORE PLAYER)
+    // =========================
+    if (gs->npc_idle_texture) {
+        SDL_FRect src_sprite = {
+            .x = 0.0f + (gs->npc_frame * 64.0f),
+            .y = 12,
+            .w = NPC_FRAME_WIDTH,
+            .h = NPC_FRAME_HEIGHT
+        };
+
+        SDL_FRect dst_sprite = {
+            .x = npc_screen_x - sprite_size / 2,
+            .y = npc_screen_y - sprite_size / 2,
+            .w = sprite_size,
+            .h = sprite_size
+        };
+
+        SDL_FlipMode flip = gs->npc_facing_right ? SDL_FLIP_NONE : SDL_FLIP_HORIZONTAL;
+
+        SDL_RenderTextureRotated(renderer, gs->npc_idle_texture, &src_sprite, &dst_sprite, 0.0, NULL, flip);
+    }
+
     // Draw player
     SDL_Texture *current_texture = gs->is_moving ? gs->run_texture : gs->idle_texture;
     
@@ -236,7 +309,6 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
         };
         
         // Destination rect (scaled by zoom)
-        float sprite_size = 16 * cam->zoom;  // Scale sprite with zoom
         SDL_FRect dst_sprite = {
             .x = screen_x - sprite_size / 2,
             .y = screen_y - sprite_size / 2,
@@ -250,6 +322,34 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
         SDL_RenderTextureRotated(renderer, current_texture, &src_sprite, &dst_sprite, 0.0, NULL, flip);
     }
 
+    // =========================
+    // NPC INTERACTION PROMPT
+    // =========================
+    if (gs->player_near_npc) {
+        SDL_Surface *surf = TTF_RenderText_Blended(
+            gs->font,
+            "Press E to talk",
+            0,
+            (SDL_Color){255,255,0,255}
+        );
+
+        SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
+        SDL_DestroySurface(surf);
+
+        float w, h;
+        SDL_GetTextureSize(tex, &w, &h);
+
+        SDL_FRect rect = {
+            .x = npc_screen_x - w / 2,
+            .y = npc_screen_y - sprite_size, // above NPC
+            .w = w,
+            .h = h
+        };
+
+        SDL_RenderTexture(renderer, tex, NULL, &rect);
+        SDL_DestroyTexture(tex);
+    }
+
     // Draw title text at top (fixed to screen, not world)
     float w, h;
     SDL_GetTextureSize(gs->title_text, &w, &h);
@@ -261,6 +361,7 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
     };
     SDL_RenderTexture(renderer, gs->title_text, NULL, &title_rect);
 }
+
 
 void game_screen_handle_input(GameScreen *gs, SDL_KeyboardEvent *key) {
     if (!gs) return;
@@ -289,6 +390,12 @@ void game_screen_handle_input(GameScreen *gs, SDL_KeyboardEvent *key) {
         case SDL_SCANCODE_DOWN:
             gs->moving_down = is_pressed;
             break;
+
+        case SDL_SCANCODE_E: // NPC Interaction
+        if (is_pressed && gs->player_near_npc) {
+            printf("Talking to NPC!\n");
+        }
+        break;
             
         default:
             break;
