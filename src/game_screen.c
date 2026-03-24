@@ -374,8 +374,9 @@ void dialogue_advance(GameScreen *gs, SDL_Renderer *renderer) {
             gs->dialogue_timer = 0.0f;
             gs->dialogue_text_complete = false;
             
-            // NEW: Mark battle to start after this dialogue
-            gs->battle_triggered = true;  // Add this line
+            // NEW: Mark battle to start after this dialogue WITH animation
+            gs->battle_triggered = true;
+            // The opening animation will play before battle
             
             if (gs->dialogue_name_texture) {
                 SDL_DestroyTexture(gs->dialogue_name_texture);

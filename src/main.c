@@ -9,6 +9,7 @@
 #include "menu_screen.h"
 #include "game_screen.h"
 #include "battle_system.h"
+#include "opening_animation.h"
 
 
 #define SDL_FLAGS SDL_INIT_VIDEO
@@ -21,6 +22,7 @@ typedef enum {
     STATE_MENU,
     STATE_PLAYING,
     STATE_DIALOGUE,
+    STATE_OPENING_ANIMATION,
     STATE_BATTLE,
     STATE_CREDITS
 } GameState;
@@ -34,6 +36,7 @@ struct Game
     SDL_Event event;
     bool isRunning;
     GameState state;
+    OpeningAnimation *opening;
     BattleSystem *battle;
 };
 
@@ -140,6 +143,8 @@ void game_free(struct Game **game)
 
         menu_destroy(g->menu);
         game_screen_destroy(g->game_screen);
+        opening_destroy(g->opening);
+        battle_destroy(g->battle);
 
         if(g->renderer) 
         {
@@ -232,6 +237,15 @@ void game_events(struct Game *g)
                 break;
 
             case SDL_EVENT_KEY_DOWN:
+                if (g->state == STATE_OPENING_ANIMATION && g->opening) {
+                    if (g->event.key.scancode == SDL_SCANCODE_ESCAPE || 
+                        g->event.key.scancode == SDL_SCANCODE_SPACE) {
+                        // Skip to end
+                        g->opening->phase = OPENING_PHASE_COMPLETE;
+                        g->opening->complete = true;
+                    }
+                    break;
+                }
                 if (g->state == STATE_BATTLE && g->battle) {
                     battle_handle_key(g->battle, &g->event.key);
                 }
@@ -281,13 +295,42 @@ void game_update(struct Game *g) {
                 if (g->game_screen->battle_triggered && !g->game_screen->in_dialogue) {
                     g->game_screen->battle_triggered = false;
                     
-                    // Get current window size
+                    // Transition to opening animation instead of directly to battle
+                    int w, h;
+                    SDL_GetWindowSize(g->window, &w, &h);
+                    
+                    g->opening = opening_create(g->renderer, w, h);
+                    if (g->opening) {
+                        g->state = STATE_OPENING_ANIMATION;
+                    } else {
+                        // Fallback: go directly to battle if animation fails
+                        g->battle = battle_create(g->renderer, w, h);
+                        if (g->battle) {
+                            g->state = STATE_BATTLE;
+                        }
+                    }
+                }
+            }
+            break;
+            
+        case STATE_OPENING_ANIMATION:  // NEW
+            if (g->opening) {
+                opening_update(g->opening, 0.016f);
+                
+                if (opening_is_complete(g->opening)) {
+                    opening_destroy(g->opening);
+                    g->opening = NULL;
+                    
+                    // Now start the battle
                     int w, h;
                     SDL_GetWindowSize(g->window, &w, &h);
                     
                     g->battle = battle_create(g->renderer, w, h);
                     if (g->battle) {
                         g->state = STATE_BATTLE;
+                    } else {
+                        // Fallback to game if battle fails
+                        g->state = STATE_PLAYING;
                     }
                 }
             }
@@ -297,7 +340,6 @@ void game_update(struct Game *g) {
             if (g->battle) {
                 battle_update(g->battle, 0.016f);
                 if (!battle_is_active(g->battle)) {
-                    // Battle ended, return to game
                     battle_destroy(g->battle);
                     g->battle = NULL;
                     g->state = STATE_PLAYING;
@@ -321,6 +363,13 @@ void game_draw(struct Game *g) {
             
         case STATE_PLAYING:
             if (g->game_screen) game_screen_render(g->renderer, g->game_screen);
+            break;
+            
+        case STATE_OPENING_ANIMATION:  // NEW
+            // Render the game screen behind (frozen)
+            if (g->game_screen) game_screen_render(g->renderer, g->game_screen);
+            // Render animation on top
+            if (g->opening) opening_render(g->renderer, g->opening);
             break;
             
         case STATE_BATTLE:

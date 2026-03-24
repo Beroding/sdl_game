@@ -102,6 +102,7 @@ typedef struct {
     SDL_FRect dialogue_box_rect;
     bool dialogue_area_hovered;
 
+    // Battle System
     bool battle_triggered;
     
 } GameScreen;
