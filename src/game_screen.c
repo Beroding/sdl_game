@@ -260,10 +260,6 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
         .h = h
     };
     SDL_RenderTexture(renderer, gs->title_text, NULL, &title_rect);
-    
-    // Debug: draw player position
-    // printf("Player: %.1f, %.1f | Camera: %.1f, %.1f | Screen: %.1f, %.1f\n",
-    //        gs->player_x, gs->player_y, cam->x, cam->y, screen_x, screen_y);
 }
 
 void game_screen_handle_input(GameScreen *gs, SDL_KeyboardEvent *key) {
