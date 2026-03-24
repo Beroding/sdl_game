@@ -130,13 +130,13 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
 
     // Initialize player position (center of map) - no Y offset (from bayemgame_screen)
     gs->player_x = gs->map_width / 2.0f;
-    gs->player_y = gs->map_height / 2.0f;
+    gs->player_y = gs->map_height / 2.0f + 17;
     gs->score = 0;
     gs->level = 1;
 
     // Set NPC spawn (near player) - from game_screen
-    gs->npc_x = gs->player_x + 37;
-    gs->npc_y = gs->player_y - 7;
+    gs->npc_x = gs->player_x + 35;
+    gs->npc_y = gs->player_y - 10;
 
     // NPC animation setup
     gs->npc_frame = 0;
