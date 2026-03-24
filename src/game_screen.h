@@ -52,11 +52,14 @@ typedef struct {
     // Camera
     Camera camera;
     
+    // Fonts
+    TTF_Font *font;
+    TTF_Font *font_bold;
+    
     // Visuals
     SDL_Texture *bg_texture;
     SDL_Texture *idle_texture;
     SDL_Texture *run_texture;
-    TTF_Font *font;
     SDL_Texture *title_text;
     SDL_Texture *npc_idle_texture;  // first npc
 } GameScreen;

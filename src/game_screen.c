@@ -93,6 +93,12 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
         return NULL;
     }
 
+    // Load bold font for NPC text
+    gs->font_bold = TTF_OpenFont("game_assets/Roboto_Medium.ttf", 36);
+    if (gs->font_bold) {
+        TTF_SetFontStyle(gs->font_bold, TTF_STYLE_BOLD);
+    }
+
     // Load NPC (from game_screen)
     SDL_Surface *npc_surface = IMG_Load("game_assets/npc1_idle.png");
     if (!npc_surface) {
@@ -334,8 +340,8 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
         SDL_GetTextureSize(tex, &w, &h);
 
         SDL_FRect rect = {
-            .x = npc_screen_x - w / 2,
-            .y = npc_screen_y - npc_sprite_size - h,
+            .x = npc_screen_x - w / 2,  // Centered on NPC
+            .y = npc_screen_y - npc_sprite_size / 2 - 5,  // Even higher (was +10)
             .w = w,
             .h = h
         };
@@ -344,10 +350,12 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
         SDL_DestroyTexture(tex);
     }
     else {
+        TTF_Font *font_to_use = gs->font_bold ? gs->font_bold : gs->font;
+        
         SDL_Surface *surf = TTF_RenderText_Blended(
-            gs->font,
-            "Come Here Tarnished",
-            0,  // Removed offensive language
+            font_to_use,
+            "Where are you going? Puny Human!",
+            0,
             (SDL_Color){255,0,0,125}
         );
 
@@ -358,8 +366,8 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
         SDL_GetTextureSize(tex, &w, &h);
 
         SDL_FRect rect = {
-            .x = npc_screen_x - w / 2,
-            .y = npc_screen_y - npc_sprite_size,
+            .x = npc_screen_x - w / 2,  // Centered on NPC
+            .y = npc_screen_y - npc_sprite_size / 2 + 5,  // Even higher (was +15)
             .w = w,
             .h = h
         };
@@ -423,6 +431,7 @@ void game_screen_destroy(GameScreen *gs) {
     if (gs) {
         if (gs->title_text) SDL_DestroyTexture(gs->title_text);
         if (gs->font) TTF_CloseFont(gs->font);
+        if (gs->font_bold) TTF_CloseFont(gs->font_bold);
         if (gs->bg_texture) SDL_DestroyTexture(gs->bg_texture);
         if (gs->idle_texture) SDL_DestroyTexture(gs->idle_texture);
         if (gs->run_texture) SDL_DestroyTexture(gs->run_texture);
