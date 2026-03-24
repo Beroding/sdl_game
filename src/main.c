@@ -8,6 +8,8 @@
 
 #include "menu_screen.h"
 #include "game_screen.h"
+#include "battle_system.h"
+
 
 #define SDL_FLAGS SDL_INIT_VIDEO
 
@@ -18,6 +20,8 @@
 typedef enum {
     STATE_MENU,
     STATE_PLAYING,
+    STATE_DIALOGUE,
+    STATE_BATTLE,
     STATE_CREDITS
 } GameState;
 
@@ -30,9 +34,9 @@ struct Game
     SDL_Event event;
     bool isRunning;
     GameState state;
+    BattleSystem *battle;
 };
 
-// Function declarations
 bool game_init_sdl(struct Game *g);
 bool game_new(struct Game **game);
 void game_free(struct Game **game);
@@ -41,7 +45,6 @@ void game_update(struct Game *g);
 void game_draw(struct Game *g);
 void game_run(struct Game *g);
 
-// State transition helpers
 void start_new_game(struct Game *g);
 void return_to_menu(struct Game *g);
 
@@ -61,14 +64,25 @@ bool game_init_sdl(struct Game *g)
     }
     printf("SDL_ttf Initialized\n");
 
-    g->window = SDL_CreateWindow(WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT, 0);
+    // Get display size for fullscreen
+    SDL_DisplayID display = SDL_GetPrimaryDisplay();
+    const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(display);
+    
+    int window_w = mode ? mode->w : WINDOW_WIDTH;
+    int window_h = mode ? mode->h : WINDOW_HEIGHT;
+
+    // Create fullscreen window
+    g->window = SDL_CreateWindow(WINDOW_TITLE, window_w, window_h, 
+                                  SDL_WINDOW_FULLSCREEN | SDL_WINDOW_BORDERLESS);
     if(!g->window)
     {
         fprintf(stderr, "Error creating window: %s\n", SDL_GetError());
         return false;
     }
-    printf("Window created\n");
-    SDL_SetWindowResizable(g->window, true);
+    printf("Window created: %dx%d fullscreen\n", window_w, window_h);
+    
+    // Don't allow resizing in fullscreen
+    SDL_SetWindowResizable(g->window, false);
 
     g->renderer = SDL_CreateRenderer(g->window, NULL);
     if(!g->renderer) 
@@ -78,8 +92,8 @@ bool game_init_sdl(struct Game *g)
     }
     printf("Renderer created\n");
 
-    // Create menu (always needed)
-    g->menu = menu_create(g->renderer, WINDOW_WIDTH, WINDOW_HEIGHT);
+    // Create menu with actual screen size
+    g->menu = menu_create(g->renderer, window_w, window_h);
     if (!g->menu)
     {
         printf("menu_create failed\n");
@@ -87,8 +101,8 @@ bool game_init_sdl(struct Game *g)
     }
     printf("Menu created\n");
 
-    // Game screen created on demand
     g->game_screen = NULL;
+    g->battle = NULL;
 
     return true;
 }
@@ -154,12 +168,16 @@ void start_new_game(struct Game *g)
 {
     printf("Starting new game...\n");
     
-    // Clean up old game screen if exists
     game_screen_destroy(g->game_screen);
     g->game_screen = NULL;
     
-    // Create fresh game screen
-    g->game_screen = game_screen_create(g->renderer, WINDOW_WIDTH, WINDOW_HEIGHT);
+    // Get actual screen size
+    SDL_DisplayID display = SDL_GetPrimaryDisplay();
+    const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(display);
+    int w = mode ? mode->w : WINDOW_WIDTH;
+    int h = mode ? mode->h : WINDOW_HEIGHT;
+    
+    g->game_screen = game_screen_create(g->renderer, w, h);
     if (!g->game_screen) {
         fprintf(stderr, "Failed to create game screen\n");
         return;
@@ -171,11 +189,6 @@ void start_new_game(struct Game *g)
 void return_to_menu(struct Game *g)
 {
     printf("Returning to menu...\n");
-    
-    // Optional: Keep game screen for "Continue" or destroy it
-    // game_screen_destroy(g->game_screen);
-    // g->game_screen = NULL;
-    
     g->state = STATE_MENU;
 }
 
@@ -196,7 +209,15 @@ void game_events(struct Game *g)
                 break;
 
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                if (g->state == STATE_MENU) {
+                if (g->state == STATE_BATTLE && g->battle) {
+                    battle_handle_mouse(g->battle, &g->event.button);
+                }
+                // Handle mouse in game screen (for dialogue)
+                if (g->state == STATE_PLAYING && g->game_screen) {
+                    game_screen_handle_mouse(g->game_screen, &g->event.button, g->renderer);
+                }
+                // Handle menu clicks
+                else if (g->state == STATE_MENU) {
                     int index = menu_handle_click(g->menu, g->event.button.x, g->event.button.y);
                     if (index >= 0) {
                         printf("menu click index=%d\n", index);
@@ -211,6 +232,9 @@ void game_events(struct Game *g)
                 break;
 
             case SDL_EVENT_KEY_DOWN:
+                if (g->state == STATE_BATTLE && g->battle) {
+                    battle_handle_key(g->battle, &g->event.key);
+                }
                 if (g->state == STATE_MENU) {
                     int index = menu_handle_key(g->menu, &g->event.key);
                     if (index >= 0) {
@@ -224,15 +248,17 @@ void game_events(struct Game *g)
                     }
                 }
                 else if (g->state == STATE_PLAYING) {
-                    // ESC returns to menu
+                    // ESC returns to menu (only if not in dialogue)
                     if (g->event.key.scancode == SDL_SCANCODE_ESCAPE) {
-                        return_to_menu(g);
+                        // Check if in dialogue first
+                        if (g->game_screen && !g->game_screen->in_dialogue) {
+                            return_to_menu(g);
+                        }
                     } else {
                         game_screen_handle_input(g->game_screen, &g->event.key);
                     }
                 }
                 else if (g->state == STATE_CREDITS) {
-                    // Any key returns to menu from credits
                     return_to_menu(g);
                 }
                 break;
@@ -243,48 +269,67 @@ void game_events(struct Game *g)
     }
 }
 
-void game_update(struct Game *g)
-{
+void game_update(struct Game *g) {
     switch (g->state) {
         case STATE_MENU:
-            // Menu animations, etc.
             break;
             
         case STATE_PLAYING:
             if (g->game_screen) {
-                game_screen_update(g->game_screen, 0.016f); // ~60fps delta
+                game_screen_update(g->game_screen, 0.016f);
+                
+                if (g->game_screen->battle_triggered && !g->game_screen->in_dialogue) {
+                    g->game_screen->battle_triggered = false;
+                    
+                    // Get current window size
+                    int w, h;
+                    SDL_GetWindowSize(g->window, &w, &h);
+                    
+                    g->battle = battle_create(g->renderer, w, h);
+                    if (g->battle) {
+                        g->state = STATE_BATTLE;
+                    }
+                }
+            }
+            break;
+            
+        case STATE_BATTLE:
+            if (g->battle) {
+                battle_update(g->battle, 0.016f);
+                if (!battle_is_active(g->battle)) {
+                    // Battle ended, return to game
+                    battle_destroy(g->battle);
+                    g->battle = NULL;
+                    g->state = STATE_PLAYING;
+                }
             }
             break;
             
         case STATE_CREDITS:
-            // Credits animation
             break;
     }
 }
 
-void game_draw(struct Game *g)
-{
+void game_draw(struct Game *g) {
     SDL_SetRenderDrawColor(g->renderer, 0, 0, 0, 255);
     SDL_RenderClear(g->renderer);
     
     switch (g->state) {
         case STATE_MENU:
-            if (g->menu) {
-                menu_render(g->renderer, g->menu);
-            }
+            if (g->menu) menu_render(g->renderer, g->menu);
             break;
             
         case STATE_PLAYING:
-            if (g->game_screen) {
-                game_screen_render(g->renderer, g->game_screen);
-            }
+            if (g->game_screen) game_screen_render(g->renderer, g->game_screen);
+            break;
+            
+        case STATE_BATTLE:
+            if (g->battle) battle_render(g->renderer, g->battle);
             break;
             
         case STATE_CREDITS:
-            // Simple credits screen
             SDL_SetRenderDrawColor(g->renderer, 10, 10, 30, 255);
             SDL_RenderClear(g->renderer);
-            // TODO: Render credits text
             break;
     }
     
