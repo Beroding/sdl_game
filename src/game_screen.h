@@ -6,7 +6,7 @@
 #include <stdbool.h>
 
 typedef struct {
-    float x, y;        // Camera position (top-left corner)
+    float x, y;        // Camera position (top-left cgame_screen_createorner)
     float zoom;        // Zoom level (2.0 = 2x zoom)
     int viewport_w;    // Screen width
     int viewport_h;    // Screen height
@@ -16,8 +16,17 @@ typedef struct {
     // Game world data
     float player_x;
     float player_y;
+    float npc_x;//first npc
+    float npc_y;//first npc
+
     int score;
     int level;
+
+
+    // NPC data
+    int npc_frame;
+    float npc_frame_timer;  // Changed: use float for smoother timing
+    float npc_frame_duration;  // NEW: time per frame
     
     // Map data
     int map_width;     // Original map image width
@@ -35,6 +44,12 @@ typedef struct {
     bool facing_right;
     bool is_moving;
     
+    // NPC Animation
+    bool npc_facing_right;//first npc
+
+    // NPC Interaction
+    bool player_near_npc;
+
     // Camera
     Camera camera;
     
@@ -44,6 +59,7 @@ typedef struct {
     SDL_Texture *run_texture;
     TTF_Font *font;
     SDL_Texture *title_text;
+    SDL_Texture *npc_idle_texture;// first npc
 } GameScreen;
 
 GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int window_height);
