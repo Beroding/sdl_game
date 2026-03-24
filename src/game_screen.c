@@ -8,11 +8,11 @@
 
 #include "game_screen.h"
 
-#define FRAME_WIDTH 15
-#define FRAME_HEIGHT 16
-#define FRAME_COUNT 6
-#define ANIMATION_SPEED 6
-#define MOVE_SPEED 1.0f
+#define PC_FRAME_WIDTH 38
+#define PC_FRAME_HEIGHT 49
+#define PC_FRAME_COUNT 7
+#define ANIMATION_SPEED 4.5
+#define MOVE_SPEED 1.2f
 #define ZOOM_LEVEL 5.0f  // 4x zoom
 #define CAMERA_SMOOTH 0.1f  // Lower = smoother but more lag (0.0-1.0)
 
@@ -56,7 +56,7 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     printf("Map size: %dx%d\n", gs->map_width, gs->map_height);
 
     // LOAD IDLE SPRITE SHEET
-    SDL_Surface *idle_surface = IMG_Load("game_assets/knight_idle_spritesheet.png");
+    SDL_Surface *idle_surface = IMG_Load("game_assets/pc_idle.png");
     if (!idle_surface) {
         fprintf(stderr, "Failed to load idle sprite: %s\n", SDL_GetError());
     } else {
@@ -66,7 +66,7 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     }
 
     // LOAD RUN SPRITE SHEET
-    SDL_Surface *run_surface = IMG_Load("game_assets/knight_run_spritesheet.png");
+    SDL_Surface *run_surface = IMG_Load("game_assets/pc_run.png");
     if (!run_surface) {
         fprintf(stderr, "Failed to load run sprite: %s\n", SDL_GetError());
     } else {
@@ -153,7 +153,7 @@ void game_screen_update(GameScreen *gs, float delta_time) {
         gs->frame_counter++;
         if (gs->frame_counter >= ANIMATION_SPEED) {
             gs->frame_counter = 0;
-            gs->current_frame = (gs->current_frame + 1) % FRAME_COUNT;
+            gs->current_frame = (gs->current_frame + 1) % PC_FRAME_COUNT;
         }
     } else {
         // Reset to idle frame when standing still
@@ -229,10 +229,10 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
     if (current_texture) {
         // Source rect for animation frame
         SDL_FRect src_sprite = {
-            .x = 1.0f + (gs->current_frame * 16.0f),
-            .y = 0,
-            .w = FRAME_WIDTH,
-            .h = FRAME_HEIGHT
+            .x = 2.0f + (gs->current_frame * PC_FRAME_WIDTH),
+            .y = 207,
+            .w = PC_FRAME_WIDTH,
+            .h = PC_FRAME_HEIGHT
         };
         
         // Destination rect (scaled by zoom)
