@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include "video_player.h"
+#include "../include/video_player.h"
 
 // The animation file we attempt to load. SDL3 does not have built-in video decoding,
 // so we provide a fallback animated sequence that creates a dramatic intro effect.

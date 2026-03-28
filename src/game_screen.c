@@ -24,7 +24,7 @@
 #include <SDL3_image/SDL_image.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
-#include "game_screen.h"
+#include "../include/game_screen.h"
 
 // ----------------------------------------------------------------------------
 // Constants – Control how the game feels

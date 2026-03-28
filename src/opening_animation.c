@@ -17,7 +17,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
-#include "opening_animation.h"
+#include "../include/opening_animation.h"
 
 // ----------------------------------------------------------------------------
 // Animation timing constants (seconds per phase)

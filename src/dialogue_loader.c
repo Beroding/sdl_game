@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include "dialogue_loader.h"
+#include "../include/dialogue_loader.h"
 
 // ============================================================================
 // HELPER - Remove spaces from start/end of text

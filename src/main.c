@@ -13,14 +13,14 @@
 #include <SDL3_image/SDL_image.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
-#include "menu_screen.h"
-#include "game_screen.h"
-#include "battle_system.h"
-#include "opening_animation.h"
-#include "dialogue_loader.h"
-#include "pause_menu.h"
-#include "save_system.h"
-#include "save_menu.h"
+#include "../include/menu_screen.h"
+#include "../include/game_screen.h"
+#include "../include/battle_system.h"
+#include "../include/opening_animation.h"
+#include "../include/dialogue_loader.h"
+#include "../include/pause_menu.h"
+#include "../include/save_system.h"
+#include "../include/save_menu.h"
 
 #define SDL_FLAGS SDL_INIT_VIDEO
 #define WINDOW_TITLE "AfterLife"

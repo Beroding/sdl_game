@@ -17,7 +17,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
-#include "pause_menu.h"
+#include "../include/pause_menu.h"
 
 // ----------------------------------------------------------------------------
 // Layout constants
