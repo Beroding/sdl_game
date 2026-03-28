@@ -4,24 +4,33 @@
 #include <math.h>
 #include "battle_system.h"
 
+// ============================================================================
+// Battle UI Layout Constants
+// ============================================================================
+// These define the visual arrangement of battle elements on screen.
+// Adjust these to reposition UI without changing logic.
+
 #define SKILL_MENU_X 50
 #define SKILL_MENU_Y 400
 #define SKILL_BUTTON_H 60
 #define SKILL_BUTTON_W 300
-#define TARGET_OFFSET_X 400
-#define TARGET_SPACING_Y 150
 
-// Ninja Heroes style positions
+// Character stage positions - player on left, enemy on right
 #define PLAYER_BASE_X 200
 #define PLAYER_BASE_Y 500
 #define ENEMY_BASE_X 1400
 #define ENEMY_BASE_Y 300
 
+// ============================================================================
+// Skill Icon Generation
+// ============================================================================
+// Creates simple colored squares as skill icons. In a full game, these would
+// be replaced with actual artwork loaded from files.
+
 static SDL_Texture* create_skill_icon(SDL_Renderer *renderer, SDL_Color color, const char *label) {
     SDL_Surface *surf = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA8888);
     if (!surf) return NULL;
     
-    // Fill with color
     for (int y = 0; y < 64; y++) {
         for (int x = 0; x < 64; x++) {
             Uint32 pixel = SDL_MapRGBA(SDL_GetPixelFormatDetails(surf->format), NULL, 
@@ -35,6 +44,12 @@ static SDL_Texture* create_skill_icon(SDL_Renderer *renderer, SDL_Color color, c
     return tex;
 }
 
+// ============================================================================
+// Battle Creation
+// ============================================================================
+// Initializes a new battle encounter. Sets up both player and enemy with
+// predefined stats and skills. Speed determines who acts first.
+
 BattleSystem* battle_create(SDL_Renderer *renderer, int window_w, int window_h) {
     BattleSystem *battle = calloc(1, sizeof(BattleSystem));
     if (!battle) return NULL;
@@ -42,17 +57,15 @@ BattleSystem* battle_create(SDL_Renderer *renderer, int window_w, int window_h) 
     battle->state = BATTLE_STATE_INTRO;
     battle->state_timer = 0;
     battle->turn_count = 1;
-    battle->escape_chance = 30; // 30% base escape chance
+    battle->escape_chance = 30;  // 30% base chance to flee
     
-    // Load fonts
     battle->font = TTF_OpenFont("game_assets/Roboto_Medium.ttf", 28);
     battle->font_bold = TTF_OpenFont("game_assets/Roboto_Medium.ttf", 32);
     if (battle->font_bold) TTF_SetFontStyle(battle->font_bold, TTF_STYLE_BOLD);
     
-    // Create battle background (dark arena)
+    // Procedural gradient background - no image file needed
     SDL_Surface *bg = SDL_CreateSurface(window_w, window_h, SDL_PIXELFORMAT_RGBA8888);
     if (bg) {
-        // Dark gradient background
         for (int y = 0; y < window_h; y++) {
             Uint8 darkness = 20 + (y * 30 / window_h);
             for (int x = 0; x < window_w; x++) {
@@ -65,7 +78,7 @@ BattleSystem* battle_create(SDL_Renderer *renderer, int window_w, int window_h) 
         SDL_DestroySurface(bg);
     }
     
-    // Setup Player (You - the Tarnished/Vermin Soul)
+    // Player setup - "Vermin Soul" is the protagonist
     BattleCharacter *player = &battle->player_team[0];
     strcpy(player->name, "Vermin Soul");
     player->max_hp = 1000;
@@ -81,7 +94,7 @@ BattleSystem* battle_create(SDL_Renderer *renderer, int window_w, int window_h) 
     player->is_player = true;
     player->skill_count = 4;
     
-    // Player Skills (Ninja Heroes style)
+    // Skill 0: Basic Attack - free but weak, always available
     strcpy(player->skills[0].name, "Basic Attack");
     strcpy(player->skills[0].description, "A swift strike with your weapon");
     player->skills[0].type = SKILL_TYPE_ATTACK;
@@ -89,6 +102,7 @@ BattleSystem* battle_create(SDL_Renderer *renderer, int window_w, int window_h) 
     player->skills[0].damage = 100;
     player->skills[0].icon = create_skill_icon(renderer, (SDL_Color){200, 200, 200, 255}, "ATK");
     
+    // Skill 1: Shadow Strike - chakra-efficient damage
     strcpy(player->skills[1].name, "Shadow Strike");
     strcpy(player->skills[1].description, "A powerful attack from the shadows");
     player->skills[1].type = SKILL_TYPE_ATTACK;
@@ -96,13 +110,15 @@ BattleSystem* battle_create(SDL_Renderer *renderer, int window_w, int window_h) 
     player->skills[1].damage = 250;
     player->skills[1].icon = create_skill_icon(renderer, (SDL_Color){100, 100, 150, 255}, "SPC");
     
+    // Skill 2: Chakra Focus - recovery when low on energy
     strcpy(player->skills[2].name, "Chakra Focus");
     strcpy(player->skills[2].description, "Recover chakra and boost defense");
     player->skills[2].type = SKILL_TYPE_DEFENSE;
     player->skills[2].chakra_cost = 0;
-    player->skills[2].heal_amount = 30; // Chakra recovery
+    player->skills[2].heal_amount = 30;
     player->skills[2].icon = create_skill_icon(renderer, (SDL_Color){100, 150, 100, 255}, "DEF");
     
+    // Skill 3: Soul Reaper - expensive but fight-ending damage
     strcpy(player->skills[3].name, "Soul Reaper");
     strcpy(player->skills[3].description, "Ultimate technique! Massive damage");
     player->skills[3].type = SKILL_TYPE_SPECIAL;
@@ -110,7 +126,7 @@ BattleSystem* battle_create(SDL_Renderer *renderer, int window_w, int window_h) 
     player->skills[3].damage = 500;
     player->skills[3].icon = create_skill_icon(renderer, (SDL_Color){255, 50, 50, 255}, "ULT");
     
-    // Setup Enemy (Naberius - Gate Keeper)
+    // Enemy setup - Naberius is the first boss
     BattleCharacter *enemy = &battle->enemy_team[0];
     strcpy(enemy->name, "Naberius");
     enemy->max_hp = 2500;
@@ -119,14 +135,14 @@ BattleSystem* battle_create(SDL_Renderer *renderer, int window_w, int window_h) 
     enemy->current_chakra = 150;
     enemy->attack = 200;
     enemy->defense = 100;
-    enemy->speed = 90;
+    enemy->speed = 90;  // Slower than player - player acts first
     enemy->x = ENEMY_BASE_X;
     enemy->y = ENEMY_BASE_Y;
-    enemy->scale = 3.0f; // Bigger boss
+    enemy->scale = 3.0f;
     enemy->is_player = false;
     enemy->skill_count = 3;
     
-    // Naberius Skills
+    // Enemy skills - AI will select based on situation
     strcpy(enemy->skills[0].name, "Crow Peck");
     enemy->skills[0].type = SKILL_TYPE_ATTACK;
     enemy->skills[0].chakra_cost = 0;
@@ -146,7 +162,7 @@ BattleSystem* battle_create(SDL_Renderer *renderer, int window_w, int window_h) 
     battle->enemy_count = 1;
     battle->current_actor_index = 0;
     
-    // Determine first turn by speed
+    // Higher speed acts first - RPG standard initiative system
     if (player->speed >= enemy->speed) {
         battle->state = BATTLE_STATE_PLAYER_TURN;
     } else {
@@ -157,10 +173,13 @@ BattleSystem* battle_create(SDL_Renderer *renderer, int window_w, int window_h) 
     return battle;
 }
 
+// ============================================================================
+// Battle Cleanup
+// ============================================================================
+
 void battle_destroy(BattleSystem *battle) {
     if (!battle) return;
     
-    // Clean up textures
     if (battle->font) TTF_CloseFont(battle->font);
     if (battle->font_bold) TTF_CloseFont(battle->font_bold);
     if (battle->bg_texture) SDL_DestroyTexture(battle->bg_texture);
@@ -175,12 +194,18 @@ void battle_destroy(BattleSystem *battle) {
     printf("Battle destroyed\n");
 }
 
+// ============================================================================
+// Battle Update
+// ============================================================================
+// Runs every frame (60 FPS). Handles animations, timers, and state transitions.
+// The state machine controls whose turn it is and when battles end.
+
 void battle_update(BattleSystem *battle, float delta_time) {
     if (!battle) return;
     
     battle->state_timer += delta_time;
     
-    // Update animations
+    // Character movement animations (lerp toward target position)
     for (int i = 0; i < battle->player_count; i++) {
         BattleCharacter *c = &battle->player_team[i];
         if (c->is_animating) {
@@ -189,7 +214,6 @@ void battle_update(BattleSystem *battle, float delta_time) {
             if (t >= 1.0f) {
                 t = 1.0f;
                 c->is_animating = false;
-                // Return to base position after animation
                 if (c->is_player) {
                     c->target_x = PLAYER_BASE_X;
                     c->target_y = PLAYER_BASE_Y;
@@ -208,7 +232,6 @@ void battle_update(BattleSystem *battle, float delta_time) {
             if (t >= 1.0f) {
                 t = 1.0f;
                 c->is_animating = false;
-                // Return to base position
                 c->target_x = ENEMY_BASE_X;
                 c->target_y = ENEMY_BASE_Y;
             }
@@ -217,47 +240,42 @@ void battle_update(BattleSystem *battle, float delta_time) {
         }
     }
     
-    // Screen shake decay
+    // Screen shake decays exponentially for impact feel
     if (battle->shake_screen > 0) {
         battle->shake_screen *= 0.9f;
         if (battle->shake_screen < 0.5f) battle->shake_screen = 0;
     }
     
-    // State machine
     switch (battle->state) {
         case BATTLE_STATE_INTRO:
+            // VS screen displays for 2 seconds before first turn
             if (battle->state_timer > 2.0f) {
-                // Determine first turn by speed
                 if (battle->player_team[0].speed >= battle->enemy_team[0].speed) {
                     battle->state = BATTLE_STATE_PLAYER_TURN;
-                    battle->current_actor_index = 0;
                 } else {
                     battle->state = BATTLE_STATE_ENEMY_TURN;
-                    battle->current_actor_index = 1;
                 }
                 battle->state_timer = 0;
-                battle->last_actor = -1; // No one has acted yet
+                battle->last_actor = -1;
             }
             break;
             
         case BATTLE_STATE_PLAYER_TURN:
-            // Wait for player input (handled by mouse/keyboard)
-            // No automatic timer here - player must choose
+            // Waiting for player input - no auto-advance
             break;
             
         case BATTLE_STATE_ENEMY_TURN:
-            // Enemy AI acts after delay
+            // 1.5 second delay lets player anticipate enemy action
             if (battle->state_timer > 1.5f) {
                 battle_enemy_ai(battle);
             }
             break;
             
         case BATTLE_STATE_ANIMATION:
-            // Wait for animation to complete
+            // Attack animation plays for 1.5 seconds
             if (battle->state_timer > 1.5f) {
                 battle->state_timer = 0;
                 
-                // Check win/lose before switching turns
                 if (battle->enemy_team[0].current_hp <= 0) {
                     battle->state = BATTLE_STATE_VICTORY;
                     battle->state_timer = 0;
@@ -267,7 +285,6 @@ void battle_update(BattleSystem *battle, float delta_time) {
                     battle->state_timer = 0;
                 }
                 else {
-                    // Switch turns based on who just acted
                     battle_next_turn(battle);
                 }
             }
@@ -294,26 +311,30 @@ void battle_update(BattleSystem *battle, float delta_time) {
     }
 }
 
+// ============================================================================
+// Battle Rendering
+// ============================================================================
+// Draws all battle elements: background, characters, UI, and effects.
+
 void battle_render(SDL_Renderer *renderer, BattleSystem *battle) {
     if (!battle || !renderer) return;
     
     int window_w, window_h;
-    SDL_GetWindowSize(SDL_GetWindowFromID(1), &window_w, &window_h); // Get from current window
+    SDL_GetWindowSize(SDL_GetWindowFromID(1), &window_w, &window_h);
     
-    // Screen shake offset
+    // Apply screen shake offset for impact frames
     float shake_x = 0, shake_y = 0;
     if (battle->shake_screen > 0) {
         shake_x = (rand() % 100 / 100.0f - 0.5f) * battle->shake_screen;
         shake_y = (rand() % 100 / 100.0f - 0.5f) * battle->shake_screen;
     }
     
-    // Background
     if (battle->bg_texture) {
         SDL_FRect bg_rect = {shake_x, shake_y, window_w, window_h};
         SDL_RenderTexture(renderer, battle->bg_texture, NULL, &bg_rect);
     }
     
-    // Draw VS text in center
+    // VS screen during intro
     if (battle->state == BATTLE_STATE_INTRO) {
         SDL_Color vs_color = {255, 200, 100, 255};
         SDL_Surface *vs_surf = TTF_RenderText_Blended(battle->font_bold, "VS", 0, vs_color);
@@ -334,22 +355,19 @@ void battle_render(SDL_Renderer *renderer, BattleSystem *battle) {
         }
     }
     
-    // Draw Player Team (Left side)
+    // Player team rendering
     for (int i = 0; i < battle->player_count; i++) {
         BattleCharacter *c = &battle->player_team[i];
         
-        // Shadow
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 100);
         SDL_FRect shadow = {c->x + shake_x - 50, c->y + shake_y + 200, 200, 40};
         SDL_RenderFillRect(renderer, &shadow);
         
-        // Character placeholder (colored rectangle for now)
         SDL_Color player_color = {100, 150, 255, 255};
         SDL_SetRenderDrawColor(renderer, player_color.r, player_color.g, player_color.b, 255);
         SDL_FRect char_rect = {c->x + shake_x, c->y + shake_y, 150 * c->scale, 200 * c->scale};
         SDL_RenderFillRect(renderer, &char_rect);
         
-        // Name
         SDL_Surface *name_surf = TTF_RenderText_Blended(battle->font_bold, c->name, 0, player_color);
         if (name_surf) {
             SDL_Texture *name_tex = SDL_CreateTextureFromSurface(renderer, name_surf);
@@ -361,7 +379,7 @@ void battle_render(SDL_Renderer *renderer, BattleSystem *battle) {
             SDL_DestroySurface(name_surf);
         }
         
-        // HP Bar
+        // HP bar - color shifts from green to yellow to red as health drops
         float hp_pct = (float)c->current_hp / c->max_hp;
         SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
         SDL_FRect hp_bg = {c->x + shake_x, c->y + shake_y - 70, 150, 20};
@@ -374,7 +392,7 @@ void battle_render(SDL_Renderer *renderer, BattleSystem *battle) {
         SDL_FRect hp_fill = {c->x + shake_x, c->y + shake_y - 70, 150 * hp_pct, 20};
         SDL_RenderFillRect(renderer, &hp_fill);
         
-        // Chakra Bar
+        // Chakra bar (blue) - separate resource from HP
         float chakra_pct = (float)c->current_chakra / c->max_chakra;
         SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
         SDL_FRect chakra_bg = {c->x + shake_x, c->y + shake_y - 45, 150, 15};
@@ -385,29 +403,26 @@ void battle_render(SDL_Renderer *renderer, BattleSystem *battle) {
         SDL_RenderFillRect(renderer, &chakra_fill);
     }
     
-    // Draw Enemy Team (Right side)
+    // Enemy team rendering (boss style - larger, red glow)
     for (int i = 0; i < battle->enemy_count; i++) {
         BattleCharacter *c = &battle->enemy_team[i];
         
-        // Shadow
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 100);
         SDL_FRect shadow = {c->x + shake_x - 50, c->y + shake_y + 250, 250, 50};
         SDL_RenderFillRect(renderer, &shadow);
         
-        // Boss glow effect
+        // Pulsing red glow effect
         float glow = 0.5f + 0.5f * sinf(SDL_GetTicks() / 500.0f);
         SDL_SetRenderDrawColor(renderer, 255 * glow, 100 * glow, 100 * glow, 50);
         SDL_FRect glow_rect = {c->x + shake_x - 20, c->y + shake_y - 20, 
                                200 * c->scale + 40, 250 * c->scale + 40};
         SDL_RenderFillRect(renderer, &glow_rect);
         
-        // Character (demon red)
         SDL_Color enemy_color = {255, 80, 80, 255};
         SDL_SetRenderDrawColor(renderer, enemy_color.r, enemy_color.g, enemy_color.b, 255);
         SDL_FRect char_rect = {c->x + shake_x, c->y + shake_y, 180 * c->scale, 250 * c->scale};
         SDL_RenderFillRect(renderer, &char_rect);
         
-        // Name
         SDL_Surface *name_surf = TTF_RenderText_Blended(battle->font_bold, c->name, 0, enemy_color);
         if (name_surf) {
             SDL_Texture *name_tex = SDL_CreateTextureFromSurface(renderer, name_surf);
@@ -419,7 +434,7 @@ void battle_render(SDL_Renderer *renderer, BattleSystem *battle) {
             SDL_DestroySurface(name_surf);
         }
         
-        // HP Bar (boss style - bigger)
+        // Boss HP bar - always red, shows exact numbers
         float hp_pct = (float)c->current_hp / c->max_hp;
         SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
         SDL_FRect hp_bg = {c->x + shake_x - 50, c->y + shake_y - 90, 280, 30};
@@ -429,7 +444,6 @@ void battle_render(SDL_Renderer *renderer, BattleSystem *battle) {
         SDL_FRect hp_fill = {c->x + shake_x - 50, c->y + shake_y - 90, 280 * hp_pct, 30};
         SDL_RenderFillRect(renderer, &hp_fill);
         
-        // HP text
         char hp_text[32];
         snprintf(hp_text, sizeof(hp_text), "%d/%d", c->current_hp, c->max_hp);
         SDL_Surface *hp_surf = TTF_RenderText_Blended(battle->font, hp_text, 0, (SDL_Color){255, 255, 255, 255});
@@ -444,11 +458,10 @@ void battle_render(SDL_Renderer *renderer, BattleSystem *battle) {
         }
     }
     
-    // Draw Skill Menu (Player Turn)
+    // Skill menu - only during player turn
     if (battle->state == BATTLE_STATE_PLAYER_TURN) {
         BattleCharacter *player = &battle->player_team[0];
         
-        // Menu background
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 200);
         SDL_FRect menu_bg = {SKILL_MENU_X - 20, SKILL_MENU_Y - 20, SKILL_BUTTON_W + 40, 
                              player->skill_count * (SKILL_BUTTON_H + 10) + 40};
@@ -460,27 +473,24 @@ void battle_render(SDL_Renderer *renderer, BattleSystem *battle) {
             int btn_x = SKILL_MENU_X;
             int btn_y = SKILL_MENU_Y + i * (SKILL_BUTTON_H + 10);
             
-            // Button background
+            // Gray out skills that cost more chakra than available
             bool can_use = skill->chakra_cost <= player->current_chakra;
             SDL_Color btn_color = can_use ? 
                 (i == battle->selected_skill ? (SDL_Color){255, 200, 100, 255} : (SDL_Color){80, 80, 120, 255}) :
-                (SDL_Color){50, 50, 50, 255}; // Gray if can't afford
+                (SDL_Color){50, 50, 50, 255};
             
             SDL_SetRenderDrawColor(renderer, btn_color.r, btn_color.g, btn_color.b, 255);
             SDL_FRect btn_rect = {btn_x, btn_y, SKILL_BUTTON_W, SKILL_BUTTON_H};
             SDL_RenderFillRect(renderer, &btn_rect);
             
-            // Border
             SDL_SetRenderDrawColor(renderer, 255, 255, 255, 200);
             SDL_RenderRect(renderer, &btn_rect);
             
-            // Skill icon
             if (skill->icon) {
                 SDL_FRect icon_rect = {btn_x + 10, btn_y + 10, 40, 40};
                 SDL_RenderTexture(renderer, skill->icon, NULL, &icon_rect);
             }
             
-            // Skill name
             SDL_Surface *name_surf = TTF_RenderText_Blended(battle->font_bold, skill->name, 0, 
                                                              can_use ? (SDL_Color){255, 255, 255, 255} : 
                                                              (SDL_Color){150, 150, 150, 255});
@@ -494,7 +504,6 @@ void battle_render(SDL_Renderer *renderer, BattleSystem *battle) {
                 SDL_DestroySurface(name_surf);
             }
             
-            // Chakra cost
             char chakra_text[16];
             snprintf(chakra_text, sizeof(chakra_text), "%d CP", skill->chakra_cost);
             SDL_Surface *chakra_surf = TTF_RenderText_Blended(battle->font, chakra_text, 0, 
@@ -510,7 +519,6 @@ void battle_render(SDL_Renderer *renderer, BattleSystem *battle) {
             }
         }
         
-        // Turn indicator
         SDL_Surface *turn_surf = TTF_RenderText_Blended(battle->font_bold, "YOUR TURN", 0, 
                                                          (SDL_Color){100, 255, 100, 255});
         if (turn_surf) {
@@ -524,7 +532,6 @@ void battle_render(SDL_Renderer *renderer, BattleSystem *battle) {
         }
     }
     
-    // Enemy turn indicator
     if (battle->state == BATTLE_STATE_ENEMY_TURN) {
         SDL_Surface *turn_surf = TTF_RenderText_Blended(battle->font_bold, "ENEMY TURN", 0, 
                                                          (SDL_Color){255, 100, 100, 255});
@@ -568,6 +575,10 @@ void battle_render(SDL_Renderer *renderer, BattleSystem *battle) {
     }
 }
 
+// ============================================================================
+// Input Handling
+// ============================================================================
+
 void battle_handle_mouse(BattleSystem *battle, SDL_MouseButtonEvent *mouse) {
     if (!battle || battle->state != BATTLE_STATE_PLAYER_TURN) return;
     
@@ -575,7 +586,6 @@ void battle_handle_mouse(BattleSystem *battle, SDL_MouseButtonEvent *mouse) {
         float mx = mouse->x;
         float my = mouse->y;
         
-        // Check skill buttons
         BattleCharacter *player = &battle->player_team[0];
         for (int i = 0; i < player->skill_count; i++) {
             int btn_x = SKILL_MENU_X;
@@ -587,7 +597,7 @@ void battle_handle_mouse(BattleSystem *battle, SDL_MouseButtonEvent *mouse) {
                 Skill *skill = &player->skills[i];
                 if (skill->chakra_cost <= player->current_chakra) {
                     battle->selected_skill = i;
-                    battle_execute_skill(battle, i, 0); // Target first enemy
+                    battle_execute_skill(battle, i, 0);
                 }
                 return;
             }
@@ -627,7 +637,7 @@ void battle_handle_key(BattleSystem *battle, SDL_KeyboardEvent *key) {
                 }
                 break;
             case SDL_SCANCODE_ESCAPE:
-                // Try to escape
+                // 30% base escape chance - failure wastes your turn
                 if ((rand() % 100) < battle->escape_chance) {
                     battle->state = BATTLE_STATE_ESCAPE;
                 } else {
@@ -639,6 +649,12 @@ void battle_handle_key(BattleSystem *battle, SDL_KeyboardEvent *key) {
     }
 }
 
+// ============================================================================
+// Skill Execution
+// ============================================================================
+// Applies damage/healing formulas and triggers visual effects.
+// Damage formula: base_damage * attacker_attack / target_defense * random(90-110%)
+
 void battle_execute_skill(BattleSystem *battle, int skill_index, int target_index) {
     if (!battle) return;
     
@@ -649,32 +665,29 @@ void battle_execute_skill(BattleSystem *battle, int skill_index, int target_inde
     
     Skill *skill = &actor->skills[skill_index];
     
-    // Track who acted
     battle->last_actor = actor->is_player ? 0 : 1;
     
-    // Deduct chakra
     actor->current_chakra -= skill->chakra_cost;
     if (actor->current_chakra < 0) actor->current_chakra = 0;
     
-    // Animate actor moving toward target
+    // Move character toward target for attack animation
     actor->is_animating = true;
     actor->anim_timer = 0;
-    // Move toward target
-    actor->target_x = (actor->x + target->x) / 2; // Halfway to target
+    actor->target_x = (actor->x + target->x) / 2;
     actor->target_y = (actor->y + target->y) / 2;
     
-    // Calculate damage
     int damage = skill->damage;
     if (skill->type == SKILL_TYPE_ATTACK || skill->type == SKILL_TYPE_SPECIAL) {
+        // Defense reduces damage proportionally, random adds variance
         damage = damage * actor->attack / target->defense;
-        damage = damage * (90 + rand() % 20) / 100; // Random variance 90-110%
+        damage = damage * (90 + rand() % 20) / 100;
         
         target->current_hp -= damage;
         if (target->current_hp < 0) target->current_hp = 0;
         
         printf("%s uses %s on %s for %d damage!\n", actor->name, skill->name, target->name, damage);
         
-        // Screen shake for impact
+        // Special attacks cause bigger screen shake
         battle_shake_screen(battle, skill->type == SKILL_TYPE_SPECIAL ? 20.0f : 10.0f);
     }
     else if (skill->type == SKILL_TYPE_HEAL) {
@@ -688,10 +701,15 @@ void battle_execute_skill(BattleSystem *battle, int skill_index, int target_inde
         printf("%s recovers %d chakra!\n", actor->name, skill->heal_amount);
     }
     
-    // Move to animation state
     battle->state = BATTLE_STATE_ANIMATION;
     battle->state_timer = 0;
 }
+
+// ============================================================================
+// Enemy AI
+// ============================================================================
+// Simple decision tree: use ultimate when wounded and able,
+// medium attack 40% of time if affordable, otherwise basic attack.
 
 void battle_enemy_ai(BattleSystem *battle) {
     if (!battle || battle->state_timer < 1.5f) return;
@@ -699,11 +717,10 @@ void battle_enemy_ai(BattleSystem *battle) {
     BattleCharacter *enemy = &battle->enemy_team[0];
     BattleCharacter *player = &battle->player_team[0];
     
-    // Simple AI: Use special if enough chakra and HP is low, otherwise attack
     int skill_choice = 0;
     
     if (enemy->current_chakra >= 80 && (float)enemy->current_hp / enemy->max_hp < 0.5f) {
-        skill_choice = 2; // Gate of Despair (ultimate)
+        skill_choice = 2; // Gate of Despair - desperation move
     }
     else if (enemy->current_chakra >= 30 && rand() % 100 < 40) {
         skill_choice = 1; // Shadow Claw
@@ -715,12 +732,17 @@ void battle_enemy_ai(BattleSystem *battle) {
     battle_execute_skill(battle, skill_choice, 0);
 }
 
+// ============================================================================
+// Turn Management
+// ============================================================================
+// Switches between player and enemy. Both sides regenerate 5 chakra per turn.
+
 void battle_next_turn(BattleSystem *battle) {
     if (!battle) return;
     
     battle->turn_count++;
     
-    // Chakra regeneration each turn
+    // Passive chakra regeneration keeps battle from stalling
     for (int i = 0; i < battle->player_count; i++) {
         BattleCharacter *c = &battle->player_team[i];
         c->current_chakra += 5;
@@ -732,16 +754,13 @@ void battle_next_turn(BattleSystem *battle) {
         if (c->current_chakra > c->max_chakra) c->current_chakra = c->max_chakra;
     }
     
-    // Switch turns based on who just acted
     if (battle->last_actor == 0) {
-        // Player just acted, now enemy's turn (if alive)
         if (battle->enemy_team[0].current_hp > 0) {
             battle->state = BATTLE_STATE_ENEMY_TURN;
             battle->current_actor_index = 1;
             battle->state_timer = 0;
         }
     } else {
-        // Enemy just acted, now player's turn (if alive)
         if (battle->player_team[0].current_hp > 0) {
             battle->state = BATTLE_STATE_PLAYER_TURN;
             battle->current_actor_index = 0;
@@ -763,7 +782,6 @@ void battle_end(BattleSystem *battle) {
     printf("Battle ended! Result: %s\n", 
            battle->state == BATTLE_STATE_VICTORY ? "VICTORY" : 
            battle->state == BATTLE_STATE_DEFEAT ? "DEFEAT" : "ESCAPE");
-    // Return to game will be handled by main
 }
 
 bool battle_is_active(BattleSystem *battle) {

@@ -1,3 +1,9 @@
+// ============================================================================
+// main.c - Game Engine Entry Point
+// ============================================================================
+// Coordinates all game subsystems: menu, gameplay, battle, and save/load.
+// The game runs as a state machine, switching between different screens.
+
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -17,11 +23,11 @@
 #include "save_menu.h"
 
 #define SDL_FLAGS SDL_INIT_VIDEO
-
-#define WINDOW_TITLE "something sumting"
+#define WINDOW_TITLE "AfterLife"
 #define WINDOW_WIDTH 1500
 #define WINDOW_HEIGHT 900
 
+// Game states - only one screen active at a time (like TV channels)
 typedef enum {
     STATE_MENU,
     STATE_PLAYING,
@@ -29,9 +35,10 @@ typedef enum {
     STATE_OPENING_ANIMATION,
     STATE_BATTLE,
     STATE_CREDITS,
-    STATE_SAVE_MENU  // New state for save/load menu
+    STATE_SAVE_MENU
 } GameState;
 
+// Central game container - all subsystems are accessed through this
 struct Game 
 {
     SDL_Window *window;
@@ -44,32 +51,27 @@ struct Game
     OpeningAnimation *opening;
     BattleSystem *battle;
     PauseMenu *pause_menu;
-    SaveSystem *save_system;  // Save system
-    SaveMenu *save_menu;       // Save menu UI
-    float play_time;           // Track play time
-    time_t session_start;      // When current session started
-    int current_save_slot;     // Which slot we're using (-1 = none)
+    SaveSystem *save_system;
+    SaveMenu *save_menu;
+    float play_time;        // Accumulated across sessions for save files
+    time_t session_start;   // Tracks current session separately
+    int current_save_slot;  // -1 = no active save (new game)
 };
 
-bool game_init_sdl(struct Game *g);
-bool game_new(struct Game **game);
-void game_free(struct Game **game);
-void game_events(struct Game *g);
-void game_update(struct Game *g);
-void game_draw(struct Game *g);
-void game_run(struct Game *g);
+// Global pointer allows callbacks (like save menu) to access game state
+struct Game *g_game = NULL;
 
-void start_new_game(struct Game *g);
-void return_to_menu(struct Game *g);
-void continue_game(struct Game *g, SaveSlotData *data);
-void save_current_game(struct Game *g, int slot);
+// Forward declarations for callbacks used in game_init_sdl
 void on_save_completed(int slot);
 void on_load_selected(int slot, SaveSlotData *data);
 void on_delete_completed(int slot);
 void on_save_cancelled(void);
 
-// Global pointer for callbacks
-struct Game *g_game = NULL;
+// ============================================================================
+// SDL Initialization
+// ============================================================================
+// Creates fullscreen window and initializes all SDL subsystems.
+// Returns false if any critical component fails to load.
 
 bool game_init_sdl(struct Game *g) 
 {
@@ -87,14 +89,13 @@ bool game_init_sdl(struct Game *g)
     }
     printf("SDL_ttf Initialized\n");
 
-    // Get display size for fullscreen
+    // Use native display resolution for fullscreen
     SDL_DisplayID display = SDL_GetPrimaryDisplay();
     const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(display);
     
     int window_w = mode ? mode->w : WINDOW_WIDTH;
     int window_h = mode ? mode->h : WINDOW_HEIGHT;
 
-    // Create fullscreen window
     g->window = SDL_CreateWindow(WINDOW_TITLE, window_w, window_h, 
                                   SDL_WINDOW_FULLSCREEN | SDL_WINDOW_BORDERLESS);
     if(!g->window)
@@ -104,7 +105,6 @@ bool game_init_sdl(struct Game *g)
     }
     printf("Window created: %dx%d fullscreen\n", window_w, window_h);
     
-    // Don't allow resizing in fullscreen
     SDL_SetWindowResizable(g->window, false);
 
     g->renderer = SDL_CreateRenderer(g->window, NULL);
@@ -115,7 +115,6 @@ bool game_init_sdl(struct Game *g)
     }
     printf("Renderer created\n");
 
-    // Create menu with actual screen size
     g->menu = menu_create(g->renderer, window_w, window_h);
     if (!g->menu)
     {
@@ -124,7 +123,6 @@ bool game_init_sdl(struct Game *g)
     }
     printf("Menu created\n");
 
-    // Create save system
     g->save_system = save_system_create();
     if (!g->save_system)
     {
@@ -133,7 +131,6 @@ bool game_init_sdl(struct Game *g)
     }
     printf("Save system created\n");
 
-    // Create save menu
     g->save_menu = save_menu_create(g->renderer, window_w, window_h, g->save_system);
     if (!g->save_menu)
     {
@@ -142,11 +139,11 @@ bool game_init_sdl(struct Game *g)
     }
     printf("Save menu created\n");
 
-    // Set up callbacks
+    // Wire up save menu callbacks so it can trigger game actions
     save_menu_set_callbacks(g->save_menu, 
-                           on_save_completed, 
-                           on_load_selected, 
-                           on_delete_completed, 
+                           on_save_completed,
+                           on_load_selected,
+                           on_delete_completed,
                            on_save_cancelled);
 
     g->game_screen = NULL;
@@ -158,6 +155,10 @@ bool game_init_sdl(struct Game *g)
     return true;
 }
 
+// ============================================================================
+// Game Instance Creation
+// ============================================================================
+
 bool game_new(struct Game **game)
 {
     *game = calloc(1, sizeof(struct Game));
@@ -168,7 +169,7 @@ bool game_new(struct Game **game)
     }
     printf("Allocated game struct\n");
     struct Game *g = *game;
-    g_game = g;  // Set global for callbacks
+    g_game = g;
 
     if(!game_init_sdl(g))
     {
@@ -184,6 +185,11 @@ bool game_new(struct Game **game)
 
     return true;
 }
+
+// ============================================================================
+// Cleanup
+// ============================================================================
+// Destroys in reverse order of creation to prevent dangling pointers.
 
 void game_free(struct Game **game) 
 {    
@@ -223,6 +229,11 @@ void game_free(struct Game **game)
     }
 }
 
+// ============================================================================
+// Start New Game
+// ============================================================================
+// Fresh game with no save association. Creates new world and resets timer.
+
 void start_new_game(struct Game *g)
 {
     printf("Starting new game...\n");
@@ -230,7 +241,6 @@ void start_new_game(struct Game *g)
     game_screen_destroy(g->game_screen);
     g->game_screen = NULL;
     
-    // Get actual screen size
     SDL_DisplayID display = SDL_GetPrimaryDisplay();
     const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(display);
     int w = mode ? mode->w : WINDOW_WIDTH;
@@ -242,16 +252,20 @@ void start_new_game(struct Game *g)
         return;
     }
     
-    // Create pause menu for this game session
     pause_menu_destroy(g->pause_menu);
     g->pause_menu = pause_menu_create(g->renderer, w, h);
     
     g->play_time = 0;
-    g->current_save_slot = -1;  // New game, no save slot yet
+    g->current_save_slot = -1;
     g->session_start = time(NULL);
     
     g->state = STATE_PLAYING;
 }
+
+// ============================================================================
+// Continue Saved Game
+// ============================================================================
+// Restores player position, stats, and progress from save file.
 
 void continue_game(struct Game *g, SaveSlotData *data)
 {
@@ -271,19 +285,15 @@ void continue_game(struct Game *g, SaveSlotData *data)
         return;
     }
     
-    // Restore game state from save
     g->game_screen->level = data->current_level;
     g->game_screen->score = data->player_score;
     g->game_screen->player_x = data->player_x;
     g->game_screen->player_y = data->player_y;
     
-    // Restore dialogue progress if any
     if (strlen(data->current_dialogue_file) > 0 && data->current_dialogue_line >= 0) {
-        // Optionally resume dialogue - for now just mark as met
-        g->game_screen->player_near_npc = false;  // Will be recalculated
+        g->game_screen->player_near_npc = false;
     }
     
-    // Create pause menu
     pause_menu_destroy(g->pause_menu);
     g->pause_menu = pause_menu_create(g->renderer, w, h);
     
@@ -293,43 +303,48 @@ void continue_game(struct Game *g, SaveSlotData *data)
     g->state = STATE_PLAYING;
 }
 
+// ============================================================================
+// Save Current Game
+// ============================================================================
+// Calculates total play time (saved + current session) before writing to disk.
+
 void save_current_game(struct Game *g, int slot)
 {
     if (!g || !g->game_screen) return;
     
-    // Calculate current play time
     time_t now = time(NULL);
     float session_time = difftime(now, g->session_start);
     float total_time = g->play_time + session_time;
     
     bool result = save_game(g->save_system, slot,
-                           "Vermin Soul",                    // player name
-                           g->game_screen->level,            // level
-                           g->game_screen->score,            // score
-                           g->game_screen->player_x,         // x position
-                           g->game_screen->player_y,         // y position
-                           "",                               // current dialogue file (optional)
-                           -1,                               // current dialogue line
-                           1000,                             // max HP (from battle system)
-                           1000,                             // current HP
-                           100,                              // max chakra
-                           100,                              // current chakra
-                           true,                             // has met naberius
-                           false,                            // defeated naberius (update this)
-                           false,                            // tutorial completed
-                           total_time);                      // play time
+                           "Vermin Soul",
+                           g->game_screen->level,
+                           g->game_screen->score,
+                           g->game_screen->player_x,
+                           g->game_screen->player_y,
+                           "",
+                           -1,
+                           1000,
+                           1000,
+                           100,
+                           100,
+                           true,
+                           false,
+                           false,
+                           total_time);
     
     if (result) {
         g->current_save_slot = slot;
-        g->play_time = total_time;  // Update stored play time
-        g->session_start = time(NULL);  // Reset session timer
+        g->play_time = total_time;
+        g->session_start = time(NULL);
         printf("Game saved successfully to slot %d\n", slot);
     } else {
         printf("Failed to save game!\n");
     }
 }
 
-// Callbacks for save menu
+// Callbacks wired to save menu - called when player confirms an action
+
 void on_save_completed(int slot)
 {
     if (g_game) {
@@ -358,6 +373,10 @@ void on_save_cancelled(void)
     printf("Save/Load operation cancelled\n");
 }
 
+// ============================================================================
+// Return to Menu
+// ============================================================================
+
 void return_to_menu(struct Game *g)
 {
     printf("Returning to menu...\n");
@@ -370,11 +389,17 @@ void return_to_menu(struct Game *g)
     }
 }
 
+// ============================================================================
+// Input Handling
+// ============================================================================
+// Routes input to the appropriate subsystem based on current game state.
+// Priority: save menu > pause menu > current game state.
+
 void game_events(struct Game *g)
 {
     while (SDL_PollEvent(&g->event)) 
     {
-        // Handle save menu first if open
+        // Save menu has highest priority when open
         if (g->state == STATE_SAVE_MENU && save_menu_is_open(g->save_menu)) {
             switch (g->event.type) {
                 case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -384,21 +409,19 @@ void game_events(struct Game *g)
                     save_menu_handle_key(g->save_menu, &g->event.key);
                     break;
             }
-            continue; // Block other events
+            continue;
         }
         
-        // Handle pause menu if open
+        // Pause menu intercepts input when active
         if (g->pause_menu && pause_menu_is_open(g->pause_menu)) {
             switch (g->event.type) {
                 case SDL_EVENT_MOUSE_BUTTON_DOWN:
                     if (pause_menu_handle_mouse(g->pause_menu, &g->event.button)) {
-                        // Check if save requested
                         if (g->pause_menu->save_requested) {
                             g->pause_menu->save_requested = false;
                             g->state = STATE_SAVE_MENU;
                             save_menu_open(g->save_menu, SAVE_MENU_MODE_SAVE);
                         }
-                        // Check if exit was requested
                         else if (g->pause_menu->exit_to_menu) {
                             g->pause_menu->exit_to_menu = false;
                             return_to_menu(g);
@@ -438,19 +461,17 @@ void game_events(struct Game *g)
                 if (g->state == STATE_BATTLE && g->battle) {
                     battle_handle_mouse(g->battle, &g->event.button);
                 }
-                // Handle mouse in game screen (for dialogue)
-                if (g->state == STATE_PLAYING && g->game_screen &&
+                else if (g->state == STATE_PLAYING && g->game_screen &&
                     (!g->pause_menu || !pause_menu_is_open(g->pause_menu)) &&
                     (!g->save_menu || !save_menu_is_open(g->save_menu))) {
                     game_screen_handle_mouse(g->game_screen, &g->event.button, g->renderer);
                 }
-                // Handle menu clicks
                 else if (g->state == STATE_MENU) {
                     int index = menu_handle_click(g->menu, g->event.button.x, g->event.button.y);
                     if (index >= 0) {
                         printf("menu click index=%d\n", index);
                         switch (index) {
-                            case 0: /* Continue - check for saves */
+                            case 0:
                                 if (g->save_system) {
                                     bool has_saves = false;
                                     for (int i = 0; i < MAX_SAVE_SLOTS; i++) {
@@ -477,6 +498,7 @@ void game_events(struct Game *g)
                 break;
 
             case SDL_EVENT_KEY_DOWN:
+                // Skip opening animation
                 if (g->state == STATE_OPENING_ANIMATION && g->opening) {
                     if (g->event.key.scancode == SDL_SCANCODE_ESCAPE || 
                         g->event.key.scancode == SDL_SCANCODE_SPACE) {
@@ -485,14 +507,14 @@ void game_events(struct Game *g)
                     }
                     break;
                 }
+                
                 if (g->state == STATE_BATTLE && g->battle) {
                     battle_handle_key(g->battle, &g->event.key);
                 }
                 
-                // ESC to toggle pause menu during gameplay
+                // ESC toggles pause menu during gameplay (but not during dialogue)
                 if (g->state == STATE_PLAYING && g->game_screen) {
                     if (g->event.key.scancode == SDL_SCANCODE_ESCAPE) {
-                        // Check if in dialogue first
                         if (g->game_screen && !g->game_screen->in_dialogue) {
                             if (g->pause_menu) {
                                 if (pause_menu_is_open(g->pause_menu)) {
@@ -514,7 +536,7 @@ void game_events(struct Game *g)
                     if (index >= 0) {
                         printf("menu enter index=%d\n", index);
                         switch (index) {
-                            case 0: /* Continue */
+                            case 0:
                                 if (g->save_system) {
                                     bool has_saves = false;
                                     for (int i = 0; i < MAX_SAVE_SLOTS; i++) {
@@ -548,13 +570,16 @@ void game_events(struct Game *g)
     }
 }
 
+// ============================================================================
+// Game Logic Update
+// ============================================================================
+// Updates at ~60 FPS. Each state handles its own logic.
+
 void game_update(struct Game *g) {
-    // Update save menu animation
     if (g->save_menu) {
         save_menu_update(g->save_menu, 0.016f);
     }
     
-    // Update pause menu animation
     if (g->pause_menu) {
         pause_menu_update(g->pause_menu, 0.016f);
     }
@@ -564,9 +589,7 @@ void game_update(struct Game *g) {
             break;
             
         case STATE_SAVE_MENU:
-            // Just animating the menu
             if (!save_menu_is_open(g->save_menu)) {
-                // Menu was closed, return to appropriate state
                 if (!g->game_screen) {
                     g->state = STATE_MENU;
                 } else {
@@ -576,7 +599,6 @@ void game_update(struct Game *g) {
             break;
             
         case STATE_PLAYING:
-            // Don't update game world when paused or in save menu
             if ((g->pause_menu && pause_menu_is_open(g->pause_menu)) ||
                 (g->save_menu && save_menu_is_open(g->save_menu))) {
                 break;
@@ -585,6 +607,7 @@ void game_update(struct Game *g) {
             if (g->game_screen) {
                 game_screen_update(g->game_screen, 0.016f);
                 
+                // Dialogue ended with battle trigger - start encounter
                 if (g->game_screen->battle_triggered && !g->game_screen->in_dialogue) {
                     g->game_screen->battle_triggered = false;
                     
@@ -641,6 +664,10 @@ void game_update(struct Game *g) {
     }
 }
 
+// ============================================================================
+// Rendering
+// ============================================================================
+
 void game_draw(struct Game *g) {
     SDL_SetRenderDrawColor(g->renderer, 0, 0, 0, 255);
     SDL_RenderClear(g->renderer);
@@ -651,14 +678,11 @@ void game_draw(struct Game *g) {
             break;
             
         case STATE_SAVE_MENU:
-            // Render game screen behind if it exists
             if (g->game_screen) {
                 game_screen_render(g->renderer, g->game_screen);
             } else {
-                // Render menu behind if no game
                 if (g->menu) menu_render(g->renderer, g->menu);
             }
-            // Render save menu on top
             if (g->save_menu) save_menu_render(g->renderer, g->save_menu);
             break;
             
@@ -687,6 +711,10 @@ void game_draw(struct Game *g) {
     SDL_RenderPresent(g->renderer);
 }
 
+// ============================================================================
+// Main Game Loop
+// ============================================================================
+
 void game_run(struct Game *g) 
 {
     while (g->isRunning) 
@@ -697,6 +725,10 @@ void game_run(struct Game *g)
         SDL_Delay(16);
     }
 }
+
+// ============================================================================
+// Program Entry Point
+// ============================================================================
 
 int main(void) 
 {

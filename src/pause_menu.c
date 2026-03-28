@@ -1,16 +1,38 @@
+// ============================================================================
+// pause_menu.c – In‑game pause menu overlay
+// ============================================================================
+//
+// This file implements a modal pause menu that appears when the player presses ESC.
+// It fades in/out smoothly, displays a semi‑transparent panel with buttons,
+// and captures input while the game is paused. Buttons allow continuing, saving,
+// opening settings (placeholder), or exiting to the main menu.
+//
+// Assumptions:
+// - The game is rendered behind the menu, which is darkened by an overlay.
+// - Fonts "Roboto_Medium.ttf" and "MedievalSharp-Regular.ttf" are available.
+// - The window size is fixed and known at creation.
+// ============================================================================
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
 #include "pause_menu.h"
 
+// ----------------------------------------------------------------------------
+// Layout constants
+// ----------------------------------------------------------------------------
 #define PANEL_WIDTH 500
 #define PANEL_HEIGHT 600
 #define BUTTON_WIDTH 400
 #define BUTTON_HEIGHT 70
 #define BUTTON_SPACING 20
-#define ANIM_SPEED 8.0f
+#define ANIM_SPEED 8.0f          // Fade speed (alpha per second)
 
+// ----------------------------------------------------------------------------
+// Helper: create a stylised panel texture with gradient and gold border.
+// Returns an SDL_Texture that can be drawn as the background of the pause menu.
+// ----------------------------------------------------------------------------
 static SDL_Texture* create_panel_texture(SDL_Renderer *renderer, int w, int h) {
     SDL_Surface *surf = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA8888);
     if (!surf) return NULL;
@@ -19,18 +41,18 @@ static SDL_Texture* create_panel_texture(SDL_Renderer *renderer, int w, int h) {
     
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
-            // Dark gradient panel
+            // Dark gradient: darker near the top, slightly lighter near bottom
             float gradient = 1.0f - (y / (float)h) * 0.3f;
             Uint8 r = (Uint8)(25 * gradient);
             Uint8 g = (Uint8)(25 * gradient);
             Uint8 b = (Uint8)(40 * gradient);
-            Uint8 a = 240;
+            Uint8 a = 240;        // Slight transparency
             
-            // Border
+            // Gold border around the panel (outer 3 pixels)
             if (x < 3 || x >= w-3 || y < 3 || y >= h-3) {
-                r = 180; g = 150; b = 100; // Gold border
+                r = 180; g = 150; b = 100;
             }
-            // Inner highlight
+            // Inner highlight band (next 3 pixels)
             else if (x < 6 || x >= w-6 || y < 6 || y >= h-6) {
                 r = 60; g = 60; b = 80;
             }
@@ -45,6 +67,9 @@ static SDL_Texture* create_panel_texture(SDL_Renderer *renderer, int w, int h) {
     return tex;
 }
 
+// ----------------------------------------------------------------------------
+// Create the pause menu: allocate structure, load fonts, build textures.
+// ----------------------------------------------------------------------------
 PauseMenu* pause_menu_create(SDL_Renderer *renderer, int window_w, int window_h) {
     PauseMenu *menu = calloc(1, sizeof(PauseMenu));
     if (!menu) return NULL;
@@ -57,21 +82,21 @@ PauseMenu* pause_menu_create(SDL_Renderer *renderer, int window_w, int window_h)
     menu->anim_alpha = 0.0f;
     menu->target_alpha = 0.0f;
     
-    // Center panel
+    // Centre the panel on the screen
     menu->panel_w = PANEL_WIDTH;
     menu->panel_h = PANEL_HEIGHT;
     menu->panel_x = (window_w - PANEL_WIDTH) / 2.0f;
     menu->panel_y = (window_h - PANEL_HEIGHT) / 2.0f;
     
-    // Load fonts
+    // Load fonts (reuse game assets if available)
     menu->font = TTF_OpenFont("game_assets/Roboto_Medium.ttf", 36);
     menu->font_title = TTF_OpenFont("game_assets/MedievalSharp-Regular.ttf", 48);
     menu->font_small = TTF_OpenFont("game_assets/Roboto_Medium.ttf", 20);
     
-    // Create panel texture
+    // Create the panel texture
     menu->panel_texture = create_panel_texture(renderer, PANEL_WIDTH, PANEL_HEIGHT);
     
-    // Create dark overlay (full screen)
+    // Create a full‑screen dark overlay to dim the game behind the menu
     SDL_Surface *overlay_surf = SDL_CreateSurface(window_w, window_h, SDL_PIXELFORMAT_RGBA8888);
     if (overlay_surf) {
         SDL_FillSurfaceRect(overlay_surf, NULL, 
@@ -81,7 +106,7 @@ PauseMenu* pause_menu_create(SDL_Renderer *renderer, int window_w, int window_h)
         SDL_DestroySurface(overlay_surf);
     }
     
-    // Setup buttons
+    // Setup buttons: positions and text textures
     const char *labels[PAUSE_BUTTON_COUNT] = {
         "CONTINUE",
         "SAVE GAME",
@@ -96,13 +121,13 @@ PauseMenu* pause_menu_create(SDL_Renderer *renderer, int window_w, int window_h)
         btn->type = i;
         btn->hovered = false;
         
-        // Button rect centered in panel
+        // Button rectangle (centered horizontally in the panel)
         btn->rect.x = menu->panel_x + (PANEL_WIDTH - BUTTON_WIDTH) / 2;
         btn->rect.y = start_y + i * (BUTTON_HEIGHT + BUTTON_SPACING);
         btn->rect.w = BUTTON_WIDTH;
         btn->rect.h = BUTTON_HEIGHT;
         
-        // Create text texture
+        // Create a texture for the button's text (white)
         SDL_Color text_color = {255, 255, 255, 255};
         SDL_Surface *text_surf = TTF_RenderText_Blended(menu->font, labels[i], 0, text_color);
         if (text_surf) {
@@ -115,6 +140,9 @@ PauseMenu* pause_menu_create(SDL_Renderer *renderer, int window_w, int window_h)
     return menu;
 }
 
+// ----------------------------------------------------------------------------
+// Free all resources allocated for the pause menu.
+// ----------------------------------------------------------------------------
 void pause_menu_destroy(PauseMenu *menu) {
     if (!menu) return;
     
@@ -134,15 +162,21 @@ void pause_menu_destroy(PauseMenu *menu) {
     printf("Pause menu destroyed\n");
 }
 
+// ----------------------------------------------------------------------------
+// Open the menu (start fade‑in animation).
+// ----------------------------------------------------------------------------
 void pause_menu_open(PauseMenu *menu) {
     if (!menu) return;
     menu->is_open = true;
     menu->should_close = false;
     menu->target_alpha = 1.0f;
-    menu->anim_alpha = 0.0f;
+    menu->anim_alpha = 0.0f;      // Start fully transparent, then fade in
     printf("Pause menu opened\n");
 }
 
+// ----------------------------------------------------------------------------
+// Request to close the menu (start fade‑out animation).
+// ----------------------------------------------------------------------------
 void pause_menu_close(PauseMenu *menu) {
     if (!menu) return;
     menu->should_close = true;
@@ -150,14 +184,20 @@ void pause_menu_close(PauseMenu *menu) {
     printf("Pause menu closing\n");
 }
 
+// ----------------------------------------------------------------------------
+// Check if the menu is currently visible.
+// ----------------------------------------------------------------------------
 bool pause_menu_is_open(PauseMenu *menu) {
     return menu && menu->is_open;
 }
 
+// ----------------------------------------------------------------------------
+// Update the fade animation. Called every frame while the menu is active.
+// ----------------------------------------------------------------------------
 void pause_menu_update(PauseMenu *menu, float delta_time) {
     if (!menu) return;
     
-    // Animate fade
+    // Smoothly approach target alpha (0 or 1)
     if (menu->anim_alpha < menu->target_alpha) {
         menu->anim_alpha += delta_time * ANIM_SPEED;
         if (menu->anim_alpha > menu->target_alpha) menu->anim_alpha = menu->target_alpha;
@@ -166,7 +206,7 @@ void pause_menu_update(PauseMenu *menu, float delta_time) {
         if (menu->anim_alpha < menu->target_alpha) menu->anim_alpha = menu->target_alpha;
     }
     
-    // Fully closed
+    // Once fully faded out, mark the menu as closed
     if (menu->should_close && menu->anim_alpha <= 0.01f) {
         menu->is_open = false;
         menu->should_close = false;
@@ -174,19 +214,23 @@ void pause_menu_update(PauseMenu *menu, float delta_time) {
     }
 }
 
+// ----------------------------------------------------------------------------
+// Render the menu: dark overlay, panel, buttons, title, hint text.
+// ----------------------------------------------------------------------------
 void pause_menu_render(SDL_Renderer *renderer, PauseMenu *menu) {
     if (!menu || !menu->is_open || menu->anim_alpha <= 0.01f) return;
     
     Uint8 alpha = (Uint8)(255 * menu->anim_alpha);
     
-    // Darken background
+    // Darken the game background
     if (menu->bg_overlay) {
         SDL_SetTextureAlphaMod(menu->bg_overlay, (Uint8)(180 * menu->anim_alpha));
-        SDL_FRect full = {0, 0, 0, 0}; // Full screen
-        SDL_RenderTexture(renderer, menu->bg_overlay, NULL, &full);
+        // Passing NULL for the source rectangle draws the whole texture stretched to the target.
+        // We pass NULL for destination to use the whole screen (the texture is full screen).
+        SDL_RenderTexture(renderer, menu->bg_overlay, NULL, NULL);
     }
     
-    // Panel shadow (offset copy)
+    // Panel shadow (offset, dark rectangle)
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, (Uint8)(100 * menu->anim_alpha));
     SDL_FRect shadow = {
         menu->panel_x + 10, 
@@ -196,14 +240,14 @@ void pause_menu_render(SDL_Renderer *renderer, PauseMenu *menu) {
     };
     SDL_RenderFillRect(renderer, &shadow);
     
-    // Main panel
+    // Main panel texture
     if (menu->panel_texture) {
         SDL_SetTextureAlphaMod(menu->panel_texture, alpha);
         SDL_FRect panel_rect = {menu->panel_x, menu->panel_y, menu->panel_w, menu->panel_h};
         SDL_RenderTexture(renderer, menu->panel_texture, NULL, &panel_rect);
     }
     
-    // Title
+    // Title text ("PAUSED")
     if (menu->font_title) {
         const char *title = "PAUSED";
         SDL_Color title_color = {255, 215, 100, alpha};
@@ -224,11 +268,11 @@ void pause_menu_render(SDL_Renderer *renderer, PauseMenu *menu) {
         }
     }
     
-    // Buttons
+    // Draw buttons
     for (int i = 0; i < PAUSE_BUTTON_COUNT; i++) {
         PauseButton *btn = &menu->buttons[i];
         
-        // Breathing hover effect
+        // Breathing effect when hovered: scale the brightness slightly
         float breathe = 1.0f;
         if (btn->hovered) {
             breathe = 0.8f + 0.2f * sinf(SDL_GetTicks() / 200.0f);
@@ -237,13 +281,13 @@ void pause_menu_render(SDL_Renderer *renderer, PauseMenu *menu) {
         // Button background
         SDL_Color bg_color;
         if (btn->hovered) {
-            // Gold breathing when hovered
+            // Golden tint when hovered
             bg_color.r = (Uint8)(80 * breathe);
             bg_color.g = (Uint8)(70 * breathe);
             bg_color.b = (Uint8)(50 * breathe);
             bg_color.a = alpha;
         } else {
-            // Dark when not hovered
+            // Dark grey when not hovered
             bg_color.r = 40;
             bg_color.g = 40;
             bg_color.b = 60;
@@ -253,14 +297,14 @@ void pause_menu_render(SDL_Renderer *renderer, PauseMenu *menu) {
         SDL_SetRenderDrawColor(renderer, bg_color.r, bg_color.g, bg_color.b, bg_color.a);
         SDL_RenderFillRect(renderer, &btn->rect);
         
-        // Button border
+        // Button border (gold when hovered)
         SDL_Color border_color = btn->hovered ? 
             (SDL_Color){(Uint8)(255*breathe), (Uint8)(215*breathe), (Uint8)(100*breathe), alpha} :
             (SDL_Color){100, 100, 120, alpha};
         SDL_SetRenderDrawColor(renderer, border_color.r, border_color.g, border_color.b, border_color.a);
         SDL_RenderRect(renderer, &btn->rect);
         
-        // Inner highlight for hovered
+        // Inner highlight for hovered button
         if (btn->hovered) {
             SDL_FRect inner = {
                 btn->rect.x + 3, btn->rect.y + 3,
@@ -286,7 +330,7 @@ void pause_menu_render(SDL_Renderer *renderer, PauseMenu *menu) {
         }
     }
     
-    // Hint at bottom
+    // Hint text at the bottom of the panel
     if (menu->font_small) {
         SDL_Color hint_color = {150, 150, 150, (Uint8)(200 * menu->anim_alpha)};
         SDL_Surface *hint_surf = TTF_RenderText_Blended(menu->font_small, 
@@ -308,19 +352,24 @@ void pause_menu_render(SDL_Renderer *renderer, PauseMenu *menu) {
     }
 }
 
+// ----------------------------------------------------------------------------
+// Handle mouse clicks and hover updates on the menu.
+// Returns true if the event was consumed (menu handled it).
+// ----------------------------------------------------------------------------
 bool pause_menu_handle_mouse(PauseMenu *menu, SDL_MouseButtonEvent *mouse) {
     if (!menu || !menu->is_open) return false;
     
     float mx = mouse->x;
     float my = mouse->y;
     
-    // Update hover states
+    // Update hover states for all buttons
     for (int i = 0; i < PAUSE_BUTTON_COUNT; i++) {
         PauseButton *btn = &menu->buttons[i];
         btn->hovered = (mx >= btn->rect.x && mx <= btn->rect.x + btn->rect.w &&
                        my >= btn->rect.y && my <= btn->rect.y + btn->rect.h);
     }
     
+    // On left click, check which button was clicked and set corresponding flags
     if (mouse->type == SDL_EVENT_MOUSE_BUTTON_DOWN && mouse->button == SDL_BUTTON_LEFT) {
         for (int i = 0; i < PAUSE_BUTTON_COUNT; i++) {
             if (menu->buttons[i].hovered) {
@@ -348,6 +397,10 @@ bool pause_menu_handle_mouse(PauseMenu *menu, SDL_MouseButtonEvent *mouse) {
     return false;
 }
 
+// ----------------------------------------------------------------------------
+// Handle keyboard input for menu navigation.
+// Returns true if the event was consumed.
+// ----------------------------------------------------------------------------
 bool pause_menu_handle_key(PauseMenu *menu, SDL_KeyboardEvent *key) {
     if (!menu || !menu->is_open) return false;
     
@@ -357,7 +410,7 @@ bool pause_menu_handle_key(PauseMenu *menu, SDL_KeyboardEvent *key) {
                 pause_menu_close(menu);
                 return true;
             case SDL_SCANCODE_UP:
-                // Find current hover and move up
+                // Move selection up (wrap around)
                 for (int i = 0; i < PAUSE_BUTTON_COUNT; i++) {
                     if (menu->buttons[i].hovered) {
                         menu->buttons[i].hovered = false;
@@ -366,7 +419,7 @@ bool pause_menu_handle_key(PauseMenu *menu, SDL_KeyboardEvent *key) {
                         return true;
                     }
                 }
-                // None hovered, select last
+                // If nothing hovered, select the last button
                 menu->buttons[PAUSE_BUTTON_COUNT - 1].hovered = true;
                 return true;
             case SDL_SCANCODE_DOWN:
@@ -378,14 +431,14 @@ bool pause_menu_handle_key(PauseMenu *menu, SDL_KeyboardEvent *key) {
                         return true;
                     }
                 }
-                // None hovered, select first
+                // If nothing hovered, select the first button
                 menu->buttons[0].hovered = true;
                 return true;
             case SDL_SCANCODE_RETURN:
             case SDL_SCANCODE_KP_ENTER:
+                // Simulate a click on the currently hovered button
                 for (int i = 0; i < PAUSE_BUTTON_COUNT; i++) {
                     if (menu->buttons[i].hovered) {
-                        // Simulate click
                         SDL_MouseButtonEvent fake_mouse = {0};
                         fake_mouse.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
                         fake_mouse.button = SDL_BUTTON_LEFT;

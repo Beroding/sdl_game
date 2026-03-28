@@ -4,10 +4,19 @@
 #include <math.h>
 #include "video_player.h"
 
-// Try to use SDL3's built-in AVI animation support
+// The animation file we attempt to load. SDL3 does not have built-in video decoding,
+// so we provide a fallback animated sequence that creates a dramatic intro effect.
 #define ANIMATION_FILE "game_assets/opening_animation.avi"
 #define FALLBACK_DURATION 4.0f
 
+/*
+ * Creates a video player instance.
+ * We try to open the video file; if it's missing or SDL can't decode it,
+ * we fall back to a procedurally generated animation. This ensures the game
+ * always shows something instead of crashing.
+ *
+ * Assumption: The renderer is valid and will exist for the player's lifetime.
+ */
 VideoPlayer* video_player_create(SDL_Renderer *renderer, const char *filename) {
     VideoPlayer *player = calloc(1, sizeof(VideoPlayer));
     if (!player) return NULL;
@@ -17,7 +26,8 @@ VideoPlayer* video_player_create(SDL_Renderer *renderer, const char *filename) {
     player->playing = true;
     player->current_time = 0;
     
-    // Try to load as SDL Animation (AVI format)
+    // Attempt to open the file as an SDL_IOStream. Even if it exists,
+    // SDL3 does not decode video, so we will always use the fallback for now.
     player->io = SDL_IOFromFile(player->filename, "rb");
     
     if (!player->io) {
@@ -26,17 +36,17 @@ VideoPlayer* video_player_create(SDL_Renderer *renderer, const char *filename) {
         player->use_fallback = true;
         player->duration = FALLBACK_DURATION;
         
-        // Create a placeholder texture for fallback
+        // Create a surface for the fallback frames. The actual content is drawn
+        // procedurally in video_player_render, so we only need a placeholder texture.
         player->frame_surface = SDL_CreateSurface(1920, 1080, SDL_PIXELFORMAT_RGBA8888);
         if (player->frame_surface) {
-            // Fill with black initially
             SDL_FillSurfaceRect(player->frame_surface, NULL, 
                 SDL_MapRGBA(SDL_GetPixelFormatDetails(player->frame_surface->format), NULL, 0, 0, 0, 255));
             player->frame_texture = SDL_CreateTextureFromSurface(renderer, player->frame_surface);
         }
     } else {
-        // SDL3 doesn't have built-in video decoding, so we'll use a simple approach
-        // For actual video support, you'd integrate FFmpeg here
+        // In a full implementation, we would use FFmpeg or another library to decode frames.
+        // For now, we log that the file exists but still fall back to the procedural animation.
         printf("Video file found but requires FFmpeg integration\n");
         printf("Using high-quality fallback animation\n");
         player->use_fallback = true;
@@ -59,11 +69,16 @@ void video_player_destroy(VideoPlayer *player) {
     
     if (player->frame_texture) SDL_DestroyTexture(player->frame_texture);
     if (player->frame_surface) SDL_DestroySurface(player->frame_surface);
-    if (player->io) SDL_CloseIO(player->io);  // FIXED: removed extra player->
+    if (player->io) SDL_CloseIO(player->io);
     free(player->filename);
     free(player);
 }
 
+/*
+ * Advances the playback time and marks the video as finished when duration is reached.
+ * The fallback animation timer is also incremented so that the rendering code can
+ * show the appropriate frame based on progress.
+ */
 void video_player_update(VideoPlayer *player, float delta_time) {
     if (!player || !player->playing || player->finished) return;
     
@@ -75,30 +90,29 @@ void video_player_update(VideoPlayer *player, float delta_time) {
         player->playing = false;
     }
     
-    // Update fallback animation frames if needed
-    if (player->use_fallback && player->frame_surface) {
-        // This is where you'd decode the next video frame
-        // For now, we just keep the surface as-is
-    }
+    // For fallback, we could decode frames here if we had actual video data.
+    // Currently, all the animation logic lives in the render function.
 }
 
+/*
+ * Renders the video frame. If using the fallback, we draw a multi‑phase
+ * procedural animation that builds a dramatic "shattering" effect.
+ * The phases are time‑based (progress from 0 to 1) to create a coherent story.
+ */
 void video_player_render(SDL_Renderer *renderer, VideoPlayer *player) {
     if (!player || !renderer || !player->frame_texture) return;
     
     int window_w, window_h;
     SDL_GetWindowSize(SDL_GetWindowFromID(1), &window_w, &window_h);
     
-    // Calculate progress
     float progress = player->current_time / player->duration;
     
     if (player->use_fallback) {
-        // Render dramatic fallback animation based on progress
-        
-        // Clear to black
+        // Clear to black as a base.
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
         
-        // Phase 1: Red glow builds (0-20%)
+        // Phase 1: Red glow builds from the center (0‑20%).
         if (progress < 0.2f) {
             float intensity = progress / 0.2f;
             SDL_SetRenderDrawColor(renderer, 
@@ -113,33 +127,30 @@ void video_player_render(SDL_Renderer *renderer, VideoPlayer *player) {
             };
             SDL_RenderFillRect(renderer, &glow);
         }
-        // Phase 2: Flash and trident strike (20-40%)
+        // Phase 2: White flash and a trident silhouette appears (20‑40%).
         else if (progress < 0.4f) {
             float t = (progress - 0.2f) / 0.2f;
-            // White flash
+            // Flash: starts bright, fades out.
             Uint8 brightness = (Uint8)(255 * (1.0f - t));
             SDL_SetRenderDrawColor(renderer, brightness, brightness, brightness, 255);
             SDL_RenderClear(renderer);
             
-            // Red trident silhouette
+            // Draw a red trident shape that moves across the screen.
             SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
-            float x = window_w * (0.8f - t * 0.6f); // Move left
+            float x = window_w * (0.8f - t * 0.6f);
             float y = window_h * 0.5f;
-            // Simple trident shape
             SDL_FRect shaft = {x - 10, y - 200, 20, 400};
             SDL_RenderFillRect(renderer, &shaft);
-            // Prongs
             SDL_RenderLine(renderer, x - 60, y - 200, x, y - 100);
             SDL_RenderLine(renderer, x + 60, y - 200, x, y - 100);
             SDL_RenderLine(renderer, x, y - 250, x, y - 100);
         }
-        // Phase 3: Screen crack effect (40-60%)
+        // Phase 3: Screen cracks outward from the center (40‑60%).
         else if (progress < 0.6f) {
             float t = (progress - 0.4f) / 0.2f;
             SDL_SetRenderDrawColor(renderer, 20, 0, 0, 255);
             SDL_RenderClear(renderer);
             
-            // Crack lines from center
             SDL_SetRenderDrawColor(renderer, 255, 200, 100, 255);
             float cx = window_w * 0.3f;
             float cy = window_h * 0.5f;
@@ -151,46 +162,39 @@ void video_player_render(SDL_Renderer *renderer, VideoPlayer *player) {
                     cy + sinf(angle) * len);
             }
         }
-        // Phase 4: Shatter and fall (60-80%)
+        // Phase 4: Screen shatters into pieces that fall (60‑80%).
         else if (progress < 0.8f) {
             float t = (progress - 0.6f) / 0.2f;
             SDL_SetRenderDrawColor(renderer, 10, 10, 20, 255);
             SDL_RenderClear(renderer);
             
-            // Falling shards - FIXED: use fmod for float modulo or cast to int
+            // Draw 20 shards that move and rotate.
             for (int i = 0; i < 20; i++) {
-                // Option 1: Cast to int for modulo
+                // Use integer positions to avoid floating‑point modulo complexity.
                 int sx = (i * 100 + (int)(t * 500)) % window_w;
                 int sy = (i * 80 + (int)(t * 600)) % window_h;
-                
-                // Option 2: Use fmod for floating point (if you need float positions)
-                // float sx = fmodf(i * 100.0f + t * 500.0f, (float)window_w);
-                // float sy = fmodf(i * 80.0f + t * 600.0f, (float)window_h);
-                
                 float rot = t * 360 + i * 20;
                 
-                SDL_SetRenderDrawColor(renderer, 150, 150, 200, (Uint8)(255 * (1-t)));
+                SDL_SetRenderDrawColor(renderer, 150, 150, 200, (Uint8)(255 * (1 - t)));
                 SDL_FRect shard = {(float)sx, (float)sy, 40, 40};
                 SDL_RenderFillRect(renderer, &shard);
             }
         }
-        // Phase 5: Fade to black (80-100%)
+        // Phase 5: Fade to black (80‑100%).
         else {
             float t = (progress - 0.8f) / 0.2f;
             SDL_SetRenderDrawColor(renderer, 
-                (Uint8)(10 * (1-t)), 
-                (Uint8)(10 * (1-t)), 
-                (Uint8)(20 * (1-t)), 
+                (Uint8)(10 * (1 - t)), 
+                (Uint8)(10 * (1 - t)), 
+                (Uint8)(20 * (1 - t)), 
                 255);
             SDL_RenderClear(renderer);
         }
         
-        // "PERISH!" text at 35-45%
-        if (progress > 0.35f && progress < 0.5f) {
-            // Text rendering would go here if font available
-        }
+        // A simple "PERISH!" text would appear here if we had a font renderer.
+        // Currently it's omitted because adding font dependencies would complicate the example.
     } else {
-        // Render actual video texture
+        // Real video texture rendering – would stretch the decoded frame to fit the window.
         SDL_FRect dst = {0, 0, window_w, window_h};
         SDL_RenderTexture(renderer, player->frame_texture, NULL, &dst);
     }

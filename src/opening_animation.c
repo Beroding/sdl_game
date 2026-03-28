@@ -1,26 +1,50 @@
+// ============================================================================
+// opening_animation.c – Boss entrance cinematic (trident strike)
+// ============================================================================
+//
+// This file implements a dramatic pre‑battle animation: a hellish trident
+// rises from below, lunges at the player, shatters the screen, and fades to
+// black. It uses particle effects, screen shake, cracks, and shards.
+//
+// Assumptions:
+// - The window dimensions are fixed and known.
+// - Font "Roboto_Medium.ttf" is available in game_assets.
+// - The animation is played once before a boss battle.
+// - Randomness is used for cracks, shards, and fire particles.
+// ============================================================================
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
 #include "opening_animation.h"
 
+// ----------------------------------------------------------------------------
+// Animation timing constants (seconds per phase)
+// ----------------------------------------------------------------------------
 #define PHASE_TRIDENT_RISE_DURATION 1.2f
 #define PHASE_THRUST_DURATION 0.4f
 #define PHASE_IMPACT_DURATION 0.3f
 #define PHASE_SHATTER_DURATION 1.5f
 #define PHASE_DARKEN_DURATION 0.8f
 
-// Trident dimensions
+// Trident dimensions (in world units, before scaling/rotation)
 #define TRIDENT_HEAD_W 120
 #define TRIDENT_HEAD_H 200
 #define TRIDENT_HANDLE_W 30
 #define TRIDENT_HANDLE_H 400
 
+// ----------------------------------------------------------------------------
+// Helper: random float between 0 and 1
+// ----------------------------------------------------------------------------
 static float randf(void) {
     return (float)rand() / RAND_MAX;
 }
 
-// Helper function to rotate a point - defined at file scope
+// ----------------------------------------------------------------------------
+// Rotate a point (px, py) around (x, y) by angle with given cos/sin.
+// Used for trident drawing and shards.
+// ----------------------------------------------------------------------------
 static void rotate_point(float px, float py, float x, float y, float cos_r, float sin_r, float *rx, float *ry) {
     float tx = px;
     float ty = py;
@@ -28,24 +52,33 @@ static void rotate_point(float px, float py, float x, float y, float cos_r, floa
     *ry = y + (tx * sin_r + ty * cos_r);
 }
 
+// ----------------------------------------------------------------------------
+// Generate radial cracks emanating from impact point.
+// Cracks are stored as line segments (x1,y1,x2,y2) with varying width and glow.
+// ----------------------------------------------------------------------------
 static void generate_radial_cracks(OpeningAnimation *anim, float cx, float cy) {
-    srand((unsigned int)SDL_GetTicks());
+    srand((unsigned int)SDL_GetTicks());   // Seed based on time for variety
     anim->impact_point_x = cx;
     anim->impact_point_y = cy;
     
     for (int i = 0; i < MAX_CRACKS; i++) {
+        // Evenly spaced angles plus a little randomness for organic look
         float angle = (i / (float)MAX_CRACKS) * 2 * 3.14159f + (randf() * 0.3f - 0.15f);
-        float length = 100 + randf() * 300;
+        float length = 100 + randf() * 300;   // Crack length varies
         
         anim->crack_points[i][0] = cx;
         anim->crack_points[i][1] = cy;
         anim->crack_points[i][2] = cx + cosf(angle) * length;
         anim->crack_points[i][3] = cy + sinf(angle) * length;
-        anim->crack_width[i] = 2 + randf() * 4;
-        anim->crack_glow[i] = 0;
+        anim->crack_width[i] = 2 + randf() * 4;      // Thickness
+        anim->crack_glow[i] = 0;                    // Will glow during impact
     }
 }
 
+// ----------------------------------------------------------------------------
+// Initialize shards (shattered glass pieces) after impact.
+// Each shard is a triangle with random shape, position, and explosive velocity.
+// ----------------------------------------------------------------------------
 static void init_shards(OpeningAnimation *anim) {
     anim->shard_count = MAX_SHARDS;
     float cx = anim->impact_point_x;
@@ -54,23 +87,23 @@ static void init_shards(OpeningAnimation *anim) {
     for (int i = 0; i < MAX_SHARDS; i++) {
         ScreenShard *s = &anim->shards[i];
         
-        // Position around impact
+        // Start shards scattered around the impact point
         float angle = (i / (float)MAX_SHARDS) * 2 * 3.14159f + randf() * 0.5f;
         float dist = 50 + randf() * 100;
         s->x = cx + cosf(angle) * dist;
         s->y = cy + sinf(angle) * dist;
         
-        // Explosive velocity outward
+        // Outward explosion velocity with upward bias (flying upward)
         float speed = 300 + randf() * 400;
         s->vx = cosf(angle) * speed;
-        s->vy = sinf(angle) * speed - 100; // Upward bias
+        s->vy = sinf(angle) * speed - 100;
         
         s->rotation = randf() * 360;
-        s->vrotation = (randf() - 0.5f) * 720;
+        s->vrotation = (randf() - 0.5f) * 720;   // Random rotation speed
         s->size = 0.5f + randf() * 1.0f;
         s->alpha = 1.0f;
         
-        // Random triangle shape
+        // Generate three random points for a triangle shape
         for (int j = 0; j < 3; j++) {
             s->px[j] = (randf() - 0.5f) * 80 * s->size;
             s->py[j] = (randf() - 0.5f) * 80 * s->size;
@@ -78,17 +111,23 @@ static void init_shards(OpeningAnimation *anim) {
     }
 }
 
+// ----------------------------------------------------------------------------
+// Initialize fire particles trailing the trident (static positions, will respawn)
+// ----------------------------------------------------------------------------
 static void init_fire_particles(OpeningAnimation *anim) {
     for (int i = 0; i < 20; i++) {
         float *p = anim->fire_particles[i];
         p[0] = anim->trident_x + (randf() - 0.5f) * 60;
         p[1] = anim->trident_y - 100 + randf() * 50;
-        p[2] = (randf() - 0.5f) * 100;
-        p[3] = -150 - randf() * 200; // Upward
-        p[4] = 0.5f + randf() * 0.5f; // Life
+        p[2] = (randf() - 0.5f) * 100;      // Horizontal drift
+        p[3] = -150 - randf() * 200;        // Upward velocity
+        p[4] = 0.5f + randf() * 0.5f;       // Lifetime
     }
 }
 
+// ----------------------------------------------------------------------------
+// Create the animation state and all required textures.
+// ----------------------------------------------------------------------------
 OpeningAnimation* opening_create(SDL_Renderer *renderer, int window_w, int window_h) {
     OpeningAnimation *anim = calloc(1, sizeof(OpeningAnimation));
     if (!anim) return NULL;
@@ -103,7 +142,7 @@ OpeningAnimation* opening_create(SDL_Renderer *renderer, int window_w, int windo
     anim->trident_x = window_w * 0.75f;
     anim->trident_y = window_h + 300;
     anim->trident_scale = 1.5f;
-    anim->trident_rotation = -15; // Tilted
+    anim->trident_rotation = -15;            // Tilted for drama
     anim->trident_glow = 0;
     anim->trident_quaking = false;
     
@@ -112,7 +151,7 @@ OpeningAnimation* opening_create(SDL_Renderer *renderer, int window_w, int windo
     anim->darkness = 0;
     anim->shatter_progress = 0;
     
-    // Create dark overlay
+    // Create a solid black texture for the final fade‑out
     SDL_Surface *surf = SDL_CreateSurface(window_w, window_h, SDL_PIXELFORMAT_RGBA8888);
     if (surf) {
         SDL_FillSurfaceRect(surf, NULL, SDL_MapRGBA(SDL_GetPixelFormatDetails(surf->format), NULL, 0, 0, 0, 255));
@@ -121,7 +160,7 @@ OpeningAnimation* opening_create(SDL_Renderer *renderer, int window_w, int windo
         SDL_DestroySurface(surf);
     }
     
-    // Create glow texture for trident
+    // Create a radial glow texture for the trident (soft additive glow)
     SDL_Surface *glow_surf = SDL_CreateSurface(256, 256, SDL_PIXELFORMAT_RGBA8888);
     if (glow_surf) {
         Uint32 *pixels = (Uint32*)glow_surf->pixels;
@@ -131,7 +170,7 @@ OpeningAnimation* opening_create(SDL_Renderer *renderer, int window_w, int windo
                 float dist = sqrtf((x-cx)*(x-cx) + (y-cy)*(y-cy));
                 float intensity = fmaxf(0, 1.0f - dist/128.0f);
                 Uint8 r = (Uint8)(255 * intensity);
-                Uint8 g = (Uint8)(100 * intensity * intensity);
+                Uint8 g = (Uint8)(100 * intensity * intensity);   // Red‑orange bias
                 Uint8 b = 0;
                 Uint8 a = (Uint8)(200 * intensity);
                 pixels[y*256 + x] = SDL_MapRGBA(SDL_GetPixelFormatDetails(glow_surf->format), NULL, r, g, b, a);
@@ -150,6 +189,9 @@ OpeningAnimation* opening_create(SDL_Renderer *renderer, int window_w, int windo
     return anim;
 }
 
+// ----------------------------------------------------------------------------
+// Free all resources.
+// ----------------------------------------------------------------------------
 void opening_destroy(OpeningAnimation *anim) {
     if (!anim) return;
     if (anim->dark_overlay) SDL_DestroyTexture(anim->dark_overlay);
@@ -158,24 +200,27 @@ void opening_destroy(OpeningAnimation *anim) {
     free(anim);
 }
 
+// ----------------------------------------------------------------------------
+// Update animation state based on delta time.
+// ----------------------------------------------------------------------------
 void opening_update(OpeningAnimation *anim, float delta_time) {
     if (!anim || anim->complete) return;
     
     anim->phase_timer += delta_time;
     anim->total_timer += delta_time;
     
-    // Screen shake decay
+    // Screen shake decays exponentially
     if (anim->screen_shake > 0) {
         anim->screen_shake *= 0.85f;
         if (anim->screen_shake < 0.5f) anim->screen_shake = 0;
     }
     
-    // Red flash decay
+    // Red flash fades quickly
     if (anim->red_flash > 0) {
         anim->red_flash *= 0.9f;
     }
     
-    // Update fire particles
+    // Update fire particles (they move upward and respawn during rise phase)
     for (int i = 0; i < 20; i++) {
         float *p = anim->fire_particles[i];
         if (p[4] > 0) {
@@ -183,7 +228,7 @@ void opening_update(OpeningAnimation *anim, float delta_time) {
             p[1] += p[3] * delta_time;
             p[4] -= delta_time * 0.5f;
         } else {
-            // Respawn during rise phase
+            // Respawn only during the rise phase (continuous fire trail)
             if (anim->phase == OPENING_PHASE_TRIDENT_RISE) {
                 p[0] = anim->trident_x + (randf() - 0.5f) * 80;
                 p[1] = anim->trident_y - 150;
@@ -194,23 +239,23 @@ void opening_update(OpeningAnimation *anim, float delta_time) {
         }
     }
     
+    // Phase state machine
     switch (anim->phase) {
         case OPENING_PHASE_TRIDENT_RISE: {
             float t = anim->phase_timer / PHASE_TRIDENT_RISE_DURATION;
             if (t > 1) t = 1;
             
-            // Ease out back
+            // Ease‑out‑back curve for dramatic rise (overshoots slightly)
             float ease = 1 + 2.70158f * powf(t - 1, 3) + 1.70158f * powf(t - 1, 2);
             
-            // Rise from below to center-right
             float start_y = anim->window_h + 300;
             float end_y = anim->window_h * 0.6f;
             anim->trident_y = start_y + (end_y - start_y) * ease;
             
-            // Glow intensifies
+            // Glow grows as it approaches
             anim->trident_glow = t;
             
-            // Quake when nearly up
+            // Quake when nearly up (tension)
             if (t > 0.7f) {
                 anim->trident_quaking = true;
                 anim->screen_shake = 5.0f * (t - 0.7f) / 0.3f;
@@ -230,31 +275,26 @@ void opening_update(OpeningAnimation *anim, float delta_time) {
             
             // Violent lunge toward player (left side of screen)
             float start_x = anim->window_w * 0.75f;
-            float end_x = anim->window_w * 0.25f; // Thrust toward player
+            float end_x = anim->window_w * 0.25f;
             float start_y = anim->window_h * 0.6f;
             float end_y = anim->window_h * 0.5f;
             
-            // Ease in cubic for violent acceleration
+            // Cubic ease‑in for acceleration (fast start, slower end)
             float ease = t * t * t;
             
             anim->trident_x = start_x + (end_x - start_x) * ease;
             anim->trident_y = start_y + (end_y - start_y) * ease;
-            anim->trident_rotation = -15 + (-45 * ease); // Rotate to point at player
+            anim->trident_rotation = -15 + (-45 * ease);   // Rotate to point at player
             
             // Intense screen shake during thrust
             anim->screen_shake = 15.0f * sinf(t * 3.14159f);
             
-            // Trail of fire
-            if (randf() < 0.3f) {
-                // Spawn extra fire particles
-            }
-            
             if (anim->phase_timer >= PHASE_THRUST_DURATION) {
                 anim->phase = OPENING_PHASE_IMPACT;
                 anim->phase_timer = 0;
-                anim->screen_shake = 30.0f; // Massive impact shake
+                anim->screen_shake = 30.0f;          // Massive impact shake
                 
-                // Generate cracks at impact point (center-left where player is)
+                // Cracks appear at the impact point (where player would be)
                 generate_radial_cracks(anim, anim->window_w * 0.3f, anim->window_h * 0.5f);
                 anim->red_flash = 1.0f;
             }
@@ -269,17 +309,17 @@ void opening_update(OpeningAnimation *anim, float delta_time) {
             anim->trident_x = anim->window_w * 0.25f;
             anim->trident_y = anim->window_h * 0.5f;
             
-            // Cracks spread
+            // Cracks glow and pulse
             for (int i = 0; i < MAX_CRACKS; i++) {
                 anim->crack_glow[i] = t * (1.0f + sinf(anim->total_timer * 20 + i) * 0.3f);
             }
             
-            anim->screen_shake = 20.0f * (1 - t);
+            anim->screen_shake = 20.0f * (1 - t);   // Shake fades
             
             if (anim->phase_timer >= PHASE_IMPACT_DURATION) {
                 anim->phase = OPENING_PHASE_SHATTER;
                 anim->phase_timer = 0;
-                init_shards(anim);
+                init_shards(anim);   // Shatter into pieces
             }
             break;
         }
@@ -290,30 +330,25 @@ void opening_update(OpeningAnimation *anim, float delta_time) {
             
             anim->shatter_progress = t;
             
-            // Update shards physics
+            // Update each shard: gravity, movement, rotation, fade
             for (int i = 0; i < anim->shard_count; i++) {
                 ScreenShard *s = &anim->shards[i];
                 
-                // Gravity
-                s->vy += 800 * delta_time;
-                
-                // Move
+                s->vy += 800 * delta_time;                // Gravity
                 s->x += s->vx * delta_time;
                 s->y += s->vy * delta_time;
-                
-                // Rotate
                 s->rotation += s->vrotation * delta_time;
                 
-                // Fade out
+                // Fade out after half the shatter duration
                 if (t > 0.5f) {
                     s->alpha = 1.0f - (t - 0.5f) * 2;
                 }
                 
-                // Screen bounds collision (bounce)
+                // Remove if it falls off screen
                 if (s->y > anim->window_h + 100) s->alpha = 0;
             }
             
-            // Trident recedes slightly
+            // Trident recedes slightly as shards fall
             anim->trident_x += 100 * delta_time;
             
             if (anim->phase_timer >= PHASE_SHATTER_DURATION) {
@@ -327,16 +362,17 @@ void opening_update(OpeningAnimation *anim, float delta_time) {
             float t = anim->phase_timer / PHASE_DARKEN_DURATION;
             if (t > 1) t = 1;
             
+            // Fade to black
             anim->darkness = t * 255;
             
-            // Continue shard fall in darkness
+            // Shards continue falling in the darkness
             for (int i = 0; i < anim->shard_count; i++) {
                 ScreenShard *s = &anim->shards[i];
                 s->vy += 800 * delta_time;
                 s->x += s->vx * delta_time;
                 s->y += s->vy * delta_time;
                 s->rotation += s->vrotation * delta_time;
-                s->alpha *= 0.95f;
+                s->alpha *= 0.95f;   // Fast fade
             }
             
             if (anim->phase_timer >= PHASE_DARKEN_DURATION) {
@@ -352,25 +388,27 @@ void opening_update(OpeningAnimation *anim, float delta_time) {
     }
 }
 
+// ----------------------------------------------------------------------------
+// Draw the trident with glow, shaft, and prongs.
+// ----------------------------------------------------------------------------
 static void draw_trident(SDL_Renderer *renderer, OpeningAnimation *anim, float shake_x, float shake_y) {
     float x = anim->trident_x + shake_x;
     float y = anim->trident_y + shake_y;
     float scale = anim->trident_scale;
     float rot = anim->trident_rotation * 3.14159f / 180.0f;
     
-    // Calculate rotated points
     float cos_r = cosf(rot);
     float sin_r = sinf(rot);
     
-    // Trident color - hellish red-orange (moved to top of function)
+    // Hellish colours
     SDL_Color shaft_color = {180, 40, 20, 255};
     SDL_Color head_color = {220, 60, 30, 255};
     SDL_Color prong_tip_color = {255, 150, 50, 255};
     
-    // Draw glow behind
+    // Glow behind the trident
     if (anim->trident_glow_texture && anim->trident_glow > 0) {
         SDL_SetTextureAlphaMod(anim->trident_glow_texture, (Uint8)(200 * anim->trident_glow));
-        float glow_size = 300 * scale * (0.8f + sinf(anim->total_timer * 10) * 0.2f);
+        float glow_size = 300 * scale * (0.8f + sinf(anim->total_timer * 10) * 0.2f);   // Pulsing
         SDL_FRect glow_rect = {
             x - glow_size/2, y - glow_size/2,
             glow_size, glow_size
@@ -378,26 +416,24 @@ static void draw_trident(SDL_Renderer *renderer, OpeningAnimation *anim, float s
         SDL_RenderTexture(renderer, anim->trident_glow_texture, NULL, &glow_rect);
     }
     
-    // Shaft (handle) - using the helper function
+    // Shaft (handle) – draw as a rotated rectangle using lines
     float sx[4], sy[4];
     rotate_point(-TRIDENT_HANDLE_W/2 * scale, 0, x, y, cos_r, sin_r, &sx[0], &sy[0]);
-    rotate_point(TRIDENT_HANDLE_W/2 * scale, 0, x, y, cos_r, sin_r, &sx[1], &sy[1]);
-    rotate_point(TRIDENT_HANDLE_W/2 * scale, TRIDENT_HANDLE_H * scale, x, y, cos_r, sin_r, &sx[2], &sy[2]);
-    rotate_point(-TRIDENT_HANDLE_W/2 * scale, TRIDENT_HANDLE_H * scale, x, y, cos_r, sin_r, &sx[3], &sy[3]);
+    rotate_point( TRIDENT_HANDLE_W/2 * scale, 0, x, y, cos_r, sin_r, &sx[1], &sy[1]);
+    rotate_point( TRIDENT_HANDLE_W/2 * scale,  TRIDENT_HANDLE_H * scale, x, y, cos_r, sin_r, &sx[2], &sy[2]);
+    rotate_point(-TRIDENT_HANDLE_W/2 * scale,  TRIDENT_HANDLE_H * scale, x, y, cos_r, sin_r, &sx[3], &sy[3]);
     
     SDL_SetRenderDrawColor(renderer, shaft_color.r, shaft_color.g, shaft_color.b, 255);
-    SDL_RenderLine(renderer, sx[0], sy[0], sx[1], sy[1]);
-    SDL_RenderLine(renderer, sx[1], sy[1], sx[2], sy[2]);
-    SDL_RenderLine(renderer, sx[2], sy[2], sx[3], sy[3]);
-    SDL_RenderLine(renderer, sx[3], sy[3], sx[0], sy[0]);
-    // Fill shaft
+    // Draw four sides
+    for (int i = 0; i < 4; i++) {
+        SDL_RenderLine(renderer, sx[i], sy[i], sx[(i+1)%4], sy[(i+1)%4]);
+    }
+    // Fill by drawing diagonals (simple but works)
     for (int i = 0; i < 4; i++) {
         SDL_RenderLine(renderer, sx[i], sy[i], sx[(i+2)%4], sy[(i+2)%4]);
     }
     
-    // Trident head (three prongs)
-    float hx = x, hy = y - TRIDENT_HEAD_H/2 * scale;
-    
+    // Trident head: three prongs
     // Center prong (longest)
     float cx1, cy1, cx2, cy2;
     rotate_point(0, -TRIDENT_HEAD_H * scale, x, y, cos_r, sin_r, &cx1, &cy1);
@@ -406,23 +442,24 @@ static void draw_trident(SDL_Renderer *renderer, OpeningAnimation *anim, float s
     SDL_SetRenderDrawColor(renderer, head_color.r, head_color.g, head_color.b, 255);
     SDL_RenderLine(renderer, cx1, cy1, cx2, cy2);
     
-    // Side prongs
+    // Left prong
     float sp1x, sp1y, sp2x, sp2y;
     rotate_point(-TRIDENT_HEAD_W/2 * scale, -TRIDENT_HEAD_H * 0.7f * scale, x, y, cos_r, sin_r, &sp1x, &sp1y);
     rotate_point(-TRIDENT_HEAD_W/3 * scale, 0, x, y, cos_r, sin_r, &sp2x, &sp2y);
     SDL_RenderLine(renderer, sp1x, sp1y, sp2x, sp2y);
     
-    rotate_point(TRIDENT_HEAD_W/2 * scale, -TRIDENT_HEAD_H * 0.7f * scale, x, y, cos_r, sin_r, &sp1x, &sp1y);
-    rotate_point(TRIDENT_HEAD_W/3 * scale, 0, x, y, cos_r, sin_r, &sp2x, &sp2y);
+    // Right prong
+    rotate_point( TRIDENT_HEAD_W/2 * scale, -TRIDENT_HEAD_H * 0.7f * scale, x, y, cos_r, sin_r, &sp1x, &sp1y);
+    rotate_point( TRIDENT_HEAD_W/3 * scale, 0, x, y, cos_r, sin_r, &sp2x, &sp2y);
     SDL_RenderLine(renderer, sp1x, sp1y, sp2x, sp2y);
     
-    // Crossbar
+    // Crossbar connecting prongs
     float bx1, by1, bx2, by2;
     rotate_point(-TRIDENT_HEAD_W/2 * scale, -TRIDENT_HEAD_H * 0.3f * scale, x, y, cos_r, sin_r, &bx1, &by1);
-    rotate_point(TRIDENT_HEAD_W/2 * scale, -TRIDENT_HEAD_H * 0.3f * scale, x, y, cos_r, sin_r, &bx2, &by2);
+    rotate_point( TRIDENT_HEAD_W/2 * scale, -TRIDENT_HEAD_H * 0.3f * scale, x, y, cos_r, sin_r, &bx2, &by2);
     SDL_RenderLine(renderer, bx1, by1, bx2, by2);
     
-    // Tips glow
+    // Glowing tips
     SDL_SetRenderDrawColor(renderer, prong_tip_color.r, prong_tip_color.g, prong_tip_color.b, 255);
     float tip_size = 8 * scale;
     for (int i = -1; i <= 1; i++) {
@@ -433,14 +470,11 @@ static void draw_trident(SDL_Renderer *renderer, OpeningAnimation *anim, float s
         SDL_FRect tip = {tx - tip_size/2, ty - tip_size/2, tip_size, tip_size};
         SDL_RenderFillRect(renderer, &tip);
     }
-    
-    // Quake effect - draw offset copies
-    if (anim->trident_quaking) {
-        float offset = 3 * sinf(anim->total_timer * 50);
-        // (Simplified - just shake the whole renderer would be easier)
-    }
 }
 
+// ----------------------------------------------------------------------------
+// Draw fire particles as glowing rectangles.
+// ----------------------------------------------------------------------------
 static void draw_fire_particles(SDL_Renderer *renderer, OpeningAnimation *anim) {
     for (int i = 0; i < 20; i++) {
         float *p = anim->fire_particles[i];
@@ -448,7 +482,7 @@ static void draw_fire_particles(SDL_Renderer *renderer, OpeningAnimation *anim) 
         
         float size = 15 * p[4];
         Uint8 r = 255;
-        Uint8 g = (Uint8)(100 + 155 * p[4]);
+        Uint8 g = (Uint8)(100 + 155 * p[4]);   // Brightens with life
         Uint8 b = 0;
         Uint8 a = (Uint8)(255 * p[4]);
         
@@ -463,6 +497,9 @@ static void draw_fire_particles(SDL_Renderer *renderer, OpeningAnimation *anim) 
     }
 }
 
+// ----------------------------------------------------------------------------
+// Draw cracks with glowing, pulsing lines.
+// ----------------------------------------------------------------------------
 static void draw_cracks(SDL_Renderer *renderer, OpeningAnimation *anim, float shake_x, float shake_y) {
     if (anim->phase < OPENING_PHASE_IMPACT) return;
     
@@ -471,7 +508,7 @@ static void draw_cracks(SDL_Renderer *renderer, OpeningAnimation *anim, float sh
         if (glow <= 0) continue;
         
         Uint8 r = 255;
-        Uint8 g = (Uint8)(100 * (1 - glow));
+        Uint8 g = (Uint8)(100 * (1 - glow));   // More red when glowing
         Uint8 b = 0;
         Uint8 a = (Uint8)(255 * fminf(1, glow));
         
@@ -482,13 +519,13 @@ static void draw_cracks(SDL_Renderer *renderer, OpeningAnimation *anim, float sh
         float x2 = anim->crack_points[i][2] + shake_x;
         float y2 = anim->crack_points[i][3] + shake_y;
         
-        // Thick glowing line
+        // Thick glowing line (draw multiple offsets)
         for (int w = -2; w <= 2; w++) {
             SDL_RenderLine(renderer, x1 + w, y1, x2 + w, y2);
             SDL_RenderLine(renderer, x1, y1 + w, x2, y2 + w);
         }
         
-        // Branch cracks
+        // Branch cracks when glow is strong (secondary cracks)
         if (glow > 0.5f) {
             float mid_x = (x1 + x2) / 2;
             float mid_y = (y1 + y2) / 2;
@@ -501,6 +538,9 @@ static void draw_cracks(SDL_Renderer *renderer, OpeningAnimation *anim, float sh
     }
 }
 
+// ----------------------------------------------------------------------------
+// Draw shattered glass shards (triangles).
+// ----------------------------------------------------------------------------
 static void draw_shards(SDL_Renderer *renderer, OpeningAnimation *anim) {
     if (anim->phase < OPENING_PHASE_SHATTER) return;
     
@@ -508,7 +548,7 @@ static void draw_shards(SDL_Renderer *renderer, OpeningAnimation *anim) {
         ScreenShard *s = &anim->shards[i];
         if (s->alpha <= 0) continue;
         
-        // Transform points
+        // Transform triangle points by rotation
         float cos_r = cosf(s->rotation * 3.14159f / 180);
         float sin_r = sinf(s->rotation * 3.14159f / 180);
         
@@ -521,24 +561,28 @@ static void draw_shards(SDL_Renderer *renderer, OpeningAnimation *anim) {
         }
         
         Uint8 alpha = (Uint8)(255 * s->alpha);
-        SDL_SetRenderDrawColor(renderer, 200, 220, 255, alpha);
+        SDL_SetRenderDrawColor(renderer, 200, 220, 255, alpha);   // Icy blue shards
         
-        // Draw triangle
-        SDL_RenderLine(renderer, tx[0], ty[0], tx[1], ty[1]);
-        SDL_RenderLine(renderer, tx[1], ty[1], tx[2], ty[2]);
-        SDL_RenderLine(renderer, tx[2], ty[2], tx[0], ty[0]);
-        
-        // Fill
-        for (int k = 0; k < 3; k++) {
-            SDL_RenderLine(renderer, tx[k], ty[k], (tx[0]+tx[1]+tx[2])/3, (ty[0]+ty[1]+ty[2])/3);
+        // Draw triangle outline
+        for (int j = 0; j < 3; j++) {
+            SDL_RenderLine(renderer, tx[j], ty[j], tx[(j+1)%3], ty[(j+1)%3]);
+        }
+        // Fill by drawing lines to centroid
+        float center_x = (tx[0] + tx[1] + tx[2]) / 3;
+        float center_y = (ty[0] + ty[1] + ty[2]) / 3;
+        for (int j = 0; j < 3; j++) {
+            SDL_RenderLine(renderer, tx[j], ty[j], center_x, center_y);
         }
         
-        // Highlight edge
+        // Highlight one edge with white
         SDL_SetRenderDrawColor(renderer, 255, 255, 255, alpha);
         SDL_RenderLine(renderer, tx[0], ty[0], tx[1], ty[1]);
     }
 }
 
+// ----------------------------------------------------------------------------
+// Draw a red screen flash.
+// ----------------------------------------------------------------------------
 static void draw_red_flash(SDL_Renderer *renderer, OpeningAnimation *anim, int w, int h) {
     if (anim->red_flash <= 0) return;
     
@@ -547,44 +591,41 @@ static void draw_red_flash(SDL_Renderer *renderer, OpeningAnimation *anim, int w
     SDL_RenderFillRect(renderer, &rect);
 }
 
+// ----------------------------------------------------------------------------
+// Render the entire animation, applying shake and overlays.
+// ----------------------------------------------------------------------------
 void opening_render(SDL_Renderer *renderer, OpeningAnimation *anim) {
     if (!anim || !renderer) return;
     
     int w = anim->window_w;
     int h = anim->window_h;
     
-    // Calculate shake
+    // Shake offset (random each frame)
     float shake_x = 0, shake_y = 0;
     if (anim->screen_shake > 0) {
         shake_x = (randf() - 0.5f) * anim->screen_shake * 2;
         shake_y = (randf() - 0.5f) * anim->screen_shake * 2;
     }
     
-    // 1. Fire particles (behind trident)
+    // Draw in order: background (not shown here – caller draws background),
+    // fire, trident, cracks, shards, flash, darkness.
     draw_fire_particles(renderer, anim);
     
-    // 2. Trident
     if (anim->phase <= OPENING_PHASE_SHATTER) {
         draw_trident(renderer, anim, shake_x, shake_y);
     }
     
-    // 3. Cracks on screen
     draw_cracks(renderer, anim, shake_x, shake_y);
-    
-    // 4. Shattered glass shards
     draw_shards(renderer, anim);
-    
-    // 5. Red flash on impact
     draw_red_flash(renderer, anim, w, h);
     
-    // 6. Darkness overlay
     if (anim->darkness > 0 && anim->dark_overlay) {
         SDL_SetTextureAlphaMod(anim->dark_overlay, (Uint8)anim->darkness);
-        SDL_FRect rect = {shake_x, shake_y, w, h};
+        SDL_FRect rect = {shake_x, shake_y, w, h};   // Darkness also shakes slightly
         SDL_RenderTexture(renderer, anim->dark_overlay, NULL, &rect);
     }
     
-    // 7. Dramatic text at impact
+    // Dramatic "PERISH!" text during impact phase
     if (anim->phase == OPENING_PHASE_IMPACT && anim->font) {
         const char *text = "PERISH!";
         SDL_Color color = {255, 50, 50, 255};
@@ -594,6 +635,7 @@ void opening_render(SDL_Renderer *renderer, OpeningAnimation *anim) {
             float tw, th;
             SDL_GetTextureSize(tex, &tw, &th);
             
+            // Pulsing scale and fade‑out
             float scale = 1.5f + sinf(anim->total_timer * 30) * 0.2f;
             float alpha = 1.0f - (anim->phase_timer / PHASE_IMPACT_DURATION);
             
@@ -610,6 +652,9 @@ void opening_render(SDL_Renderer *renderer, OpeningAnimation *anim) {
     }
 }
 
+// ----------------------------------------------------------------------------
+// Return true when the animation is finished.
+// ----------------------------------------------------------------------------
 bool opening_is_complete(OpeningAnimation *anim) {
     return anim && anim->complete;
 }
