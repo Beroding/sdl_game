@@ -221,6 +221,8 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     gs->dialogue_char_delay = DIALOGUE_CHAR_DELAY;
     gs->dialogue_timer = 0.0f;
     gs->dialogue_area_hovered = false;
+    gs->choice_a_hovered = false;
+    gs->choice_b_hovered = false;
 
     // Initialize dialogue box rect
     gs->dialogue_box_rect = (SDL_FRect){0, 0, 0, 0};
@@ -297,37 +299,40 @@ void game_screen_update(GameScreen *gs, float delta_time) {
 
 // === DIALOGUE SYSTEM FUNCTIONS ===
 
-void dialogue_start(GameScreen *gs, SDL_Renderer *renderer) {
+void dialogue_start_script(GameScreen *gs, SDL_Renderer *renderer, const char *filename) {
     if (!gs || gs->in_dialogue) return;
     
+    // Clean up old script
+    if (gs->current_script) {
+        dialogue_destroy(gs->current_script);
+        gs->current_script = NULL;
+    }
+    
+    gs->current_script = dialogue_load(filename);
+    if (!gs->current_script) {
+        printf("Failed to load dialogue: %s\n", filename);
+        return;
+    }
+    
     gs->in_dialogue = true;
-    gs->dialogue_index = 0;
+    gs->current_line_index = 0;
     gs->dialogue_char_index = 0;
     gs->dialogue_timer = 0.0f;
     gs->dialogue_text_complete = false;
     gs->dialogue_skip_requested = false;
-    gs->waiting_for_player_choice = false;  // NEW
-    gs->player_speaking = false;            // NEW
+    gs->waiting_for_player_choice = false;
+    gs->player_speaking = false;
     
     // Initialize dialogue NPC animation
     gs->dialogue_npc_frame = 0;
     gs->dialogue_npc_timer = 0.0f;
     gs->dialogue_npc_frame_duration = 0.4f;
-
-    // Naberius lines (0, 1, 2) -> Player choice -> Naberius final
-    gs->dialogue_count = 3;
     
-    strcpy(gs->dialogue_lines[0].speaker, "???");
-    strcpy(gs->dialogue_lines[0].text, "...");
-    
-    strcpy(gs->dialogue_lines[1].speaker, "Naberius");
-    strcpy(gs->dialogue_lines[1].text, "I am Naberius, the Gate Keeper. I am the voice that whispers in the silence before the fall. Some call me a demon, a warden, a crow perched upon the edge of eternity.");
-    
-    strcpy(gs->dialogue_lines[2].speaker, "Naberius");
-    strcpy(gs->dialogue_lines[2].text, "Vermin Soul, You are not supposed to be here..., Retrace your steps, NOW!.");
-    
-    // Player response (stored separately)
-    strcpy(gs->player_dialogue_text, "I'm not taking any step behind my back!");
+    // Check if first line is a choice
+    DialogueEntry *first = dialogue_get_line(gs->current_script, 0);
+    if (first && first->is_player_choice) {
+        gs->waiting_for_player_choice = true;
+    }
     
     // Clear cached textures
     if (gs->dialogue_name_texture) {
@@ -335,13 +340,12 @@ void dialogue_start(GameScreen *gs, SDL_Renderer *renderer) {
         gs->dialogue_name_texture = NULL;
     }
     
-    printf("Dialogue started - Line 1/%d\n", gs->dialogue_count);
+    printf("Dialogue started: %s (%d lines)\n", filename, gs->current_script->line_count);
 }
 
-void dialogue_advance(GameScreen *gs, SDL_Renderer *renderer) {
-    if (!gs || !gs->in_dialogue) return;
+void dialogue_advance_script(GameScreen *gs, SDL_Renderer *renderer) {
+    if (!gs || !gs->in_dialogue || !gs->current_script) return;
     
-    // If waiting for player choice, don't advance normally
     if (gs->waiting_for_player_choice) {
         return;
     }
@@ -349,63 +353,98 @@ void dialogue_advance(GameScreen *gs, SDL_Renderer *renderer) {
     if (!gs->dialogue_text_complete) {
         gs->dialogue_skip_requested = true;
         printf("Skipping to end of line\n");
-    } else {
-        gs->dialogue_index++;
-        printf("Advancing to line %d/%d\n", gs->dialogue_index + 1, gs->dialogue_count);
+        return;
+    }
+    
+    DialogueEntry *current = dialogue_get_line(gs->current_script, gs->current_line_index);
+    if (!current) {
+        dialogue_end(gs);
+        return;
+    }
+    
+    // Check if this triggers battle
+    if (current->triggers_battle) {
+        gs->battle_triggered = true;
+        dialogue_end(gs);
+        return;
+    }
+    
+    // Move to next line
+    int next = current->next_line;
+    
+    if (next >= 0 && next < gs->current_script->line_count) {
+        gs->current_line_index = next;
+        gs->dialogue_char_index = 0;
+        gs->dialogue_timer = 0.0f;
+        gs->dialogue_text_complete = false;
+        gs->dialogue_skip_requested = false;
+        gs->player_speaking = false;
         
-        // Check if we need to show player choice after line 2
-        if (gs->dialogue_index == 3) {
-            // Finished Naberius's 3 lines, now wait for player
+        // Check if next line is a choice
+        DialogueEntry *next_entry = dialogue_get_line(gs->current_script, next);
+        if (next_entry && next_entry->is_player_choice) {
             gs->waiting_for_player_choice = true;
-            gs->dialogue_index = 2; // Stay on last line for context
-            printf("Waiting for player choice...\n");
-            return;
+            printf("Waiting for player choice at line %d\n", next);
         }
         
-        // Check if player just spoke, now show Naberius response
-        if (gs->player_speaking) {
-            gs->player_speaking = false;
-            // Naberius final response
-            strcpy(gs->dialogue_lines[0].speaker, "Naberius");
-            strcpy(gs->dialogue_lines[0].text, "Kekekekek, you misunderstood it human. That was not a request. That was the only mercy I offer and you just threw it back. So now… we do this the HARD WAY. Don't disappoint me.");
-            gs->dialogue_index = 0;
-            gs->dialogue_count = 1;
-            gs->dialogue_char_index = 0;
-            gs->dialogue_timer = 0.0f;
-            gs->dialogue_text_complete = false;
-            
-            // NEW: Mark battle to start after this dialogue WITH animation
+        if (gs->dialogue_name_texture) {
+            SDL_DestroyTexture(gs->dialogue_name_texture);
+            gs->dialogue_name_texture = NULL;
+        }
+        
+        printf("Advanced to line %d\n", next);
+    } else {
+        printf("End of dialogue\n");
+        dialogue_end(gs);
+    }
+}
+
+void dialogue_select_choice(GameScreen *gs, int choice) {
+    if (!gs || !gs->waiting_for_player_choice || !gs->current_script) return;
+    
+    DialogueEntry *current = dialogue_get_line(gs->current_script, gs->current_line_index);
+    if (!current || !current->is_player_choice) return;
+    
+    int next_line = (choice == 0) ? current->next_line_a : current->next_line_b;
+    
+    printf("Player selected choice %d -> jumping to line %d\n", choice, next_line);
+    
+    gs->waiting_for_player_choice = false;
+    // REMOVED: gs->player_speaking = false;  // Let the .txt file determine who speaks!
+    
+    if (next_line >= 0 && next_line < gs->current_script->line_count) {
+        gs->current_line_index = next_line;
+        gs->dialogue_char_index = 0;
+        gs->dialogue_timer = 0.0f;
+        gs->dialogue_text_complete = false;
+        gs->dialogue_skip_requested = false;
+        
+        // Check if next line triggers battle
+        DialogueEntry *next_entry = dialogue_get_line(gs->current_script, next_line);
+        if (next_entry && next_entry->triggers_battle) {
             gs->battle_triggered = true;
-            // The opening animation will play before battle
-            
-            if (gs->dialogue_name_texture) {
-                SDL_DestroyTexture(gs->dialogue_name_texture);
-                gs->dialogue_name_texture = NULL;
-            }
+            dialogue_end(gs);
             return;
         }
         
-        if (gs->dialogue_index >= gs->dialogue_count) {
-            dialogue_end(gs);
-        } else {
-            gs->dialogue_char_index = 0;
-            gs->dialogue_timer = 0.0f;
-            gs->dialogue_text_complete = false;
-            gs->dialogue_skip_requested = false;
-            
-            if (gs->dialogue_name_texture) {
-                SDL_DestroyTexture(gs->dialogue_name_texture);
-                gs->dialogue_name_texture = NULL;
-            }
+        // Check if next line is another choice
+        if (next_entry && next_entry->is_player_choice) {
+            gs->waiting_for_player_choice = true;
         }
+        
+        // Clear cached textures
+        if (gs->dialogue_name_texture) {
+            SDL_DestroyTexture(gs->dialogue_name_texture);
+            gs->dialogue_name_texture = NULL;
+        }
+    } else {
+        dialogue_end(gs);
     }
 }
 
 void dialogue_end(GameScreen *gs) {
     if (!gs) return;
     gs->in_dialogue = false;
-    gs->dialogue_index = 0;
-    gs->dialogue_char_index = 0;
     
     if (gs->dialogue_name_texture) {
         SDL_DestroyTexture(gs->dialogue_name_texture);
@@ -416,7 +455,7 @@ void dialogue_end(GameScreen *gs) {
 }
 
 void dialogue_update(GameScreen *gs, float delta_time, SDL_Renderer *renderer) {
-    if (!gs || !gs->in_dialogue) return;
+    if (!gs || !gs->in_dialogue || !gs->current_script) return;
     
     gs->dialogue_timer += delta_time;
     
@@ -428,7 +467,10 @@ void dialogue_update(GameScreen *gs, float delta_time, SDL_Renderer *renderer) {
     }
     
     if (!gs->dialogue_text_complete) {
-        const char *current_text = gs->dialogue_lines[gs->dialogue_index].text;
+        DialogueEntry *entry = dialogue_get_line(gs->current_script, gs->current_line_index);
+        if (!entry) return;
+        
+        const char *current_text = entry->text;
         int text_len = strlen(current_text);
         
         if (gs->dialogue_skip_requested) {
@@ -449,23 +491,33 @@ void dialogue_update(GameScreen *gs, float delta_time, SDL_Renderer *renderer) {
 bool dialogue_handle_mouse(GameScreen *gs, SDL_MouseButtonEvent *mouse, SDL_Renderer *renderer) {
     if (!gs || !gs->in_dialogue) return false;
     
-    if (mouse->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-        if (mouse->button == SDL_BUTTON_LEFT) {
-            // Check if clicking answer bar during choice
-            if (gs->waiting_for_player_choice) {
-                float mx = mouse->x;
-                float my = mouse->y;
-                if (mx >= gs->answer_bar_rect.x && 
-                    mx <= gs->answer_bar_rect.x + gs->answer_bar_rect.w &&
-                    my >= gs->answer_bar_rect.y && 
-                    my <= gs->answer_bar_rect.y + gs->answer_bar_rect.h) {
-                    dialogue_handle_player_choice(gs, renderer);
-                    return true;
-                }
-            } else {
-                dialogue_advance(gs, renderer);
+    float mx = mouse->x;
+    float my = mouse->y;
+    
+    // Update hover states
+    gs->choice_a_hovered = (mx >= gs->choice_a_rect.x && 
+                            mx <= gs->choice_a_rect.x + gs->choice_a_rect.w &&
+                            my >= gs->choice_a_rect.y && 
+                            my <= gs->choice_a_rect.y + gs->choice_a_rect.h);
+                            
+    gs->choice_b_hovered = (mx >= gs->choice_b_rect.x && 
+                            mx <= gs->choice_b_rect.x + gs->choice_b_rect.w &&
+                            my >= gs->choice_b_rect.y && 
+                            my <= gs->choice_b_rect.y + gs->choice_b_rect.h);
+    
+    if (mouse->type == SDL_EVENT_MOUSE_BUTTON_DOWN && mouse->button == SDL_BUTTON_LEFT) {
+        // Check if clicking choice buttons
+        if (gs->waiting_for_player_choice) {
+            if (gs->choice_a_hovered) {
+                dialogue_select_choice(gs, 0);  // Choice A
+                return true;
+            } else if (gs->choice_b_hovered) {
+                dialogue_select_choice(gs, 1);  // Choice B
                 return true;
             }
+        } else {
+            dialogue_advance_script(gs, renderer);
+            return true;
         }
     }
     
@@ -480,7 +532,7 @@ bool dialogue_handle_key(GameScreen *gs, SDL_KeyboardEvent *key, SDL_Renderer *r
             case SDL_SCANCODE_E:
             case SDL_SCANCODE_RETURN:
             case SDL_SCANCODE_SPACE:
-                dialogue_advance(gs, renderer);
+                dialogue_advance_script(gs, renderer);
                 return true;
                 
             case SDL_SCANCODE_ESCAPE:
@@ -496,7 +548,7 @@ bool dialogue_handle_key(GameScreen *gs, SDL_KeyboardEvent *key, SDL_Renderer *r
 }
 
 void dialogue_render(SDL_Renderer *renderer, GameScreen *gs) {
-    if (!gs || !gs->in_dialogue || !renderer) return;
+    if (!gs || !gs->in_dialogue || !renderer || !gs->current_script) return;
     
     int window_w = gs->camera.viewport_w;
     int window_h = gs->camera.viewport_h;
@@ -507,30 +559,180 @@ void dialogue_render(SDL_Renderer *renderer, GameScreen *gs) {
         gs->dialogue_box_texture = create_dialogue_box(renderer, box_w, DIALOGUE_BOX_HEIGHT);
     }
     
-    // === DARKEN BACKGROUND MORE when waiting for choice ===
+    // === SEMI-TRANSPARENT DARK BACKGROUND ===
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 180);
+    SDL_FRect darken_rect = {0, 0, window_w, window_h};
+    SDL_RenderFillRect(renderer, &darken_rect);
+    
+    // Get current dialogue entry first
+    DialogueEntry *entry = dialogue_get_line(gs->current_script, gs->current_line_index);
+    if (!entry) return;
+    
+    // Determine who is speaking based on the dialogue entry speaker field
+    bool is_player_speaking = (strcmp(entry->speaker, "You") == 0);
+    
+    // === DRAW CHOICE BUTTONS (LOWER POSITION WITH BREATHING RGB) ===
     if (gs->waiting_for_player_choice) {
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 200);
-        SDL_FRect darken_rect = {0, 0, window_w, window_h};
-        SDL_RenderFillRect(renderer, &darken_rect);
-    } else {
-        // Normal darken during regular dialogue
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 140);
-        SDL_FRect darken_rect = {0, 0, window_w, window_h};
-        SDL_RenderFillRect(renderer, &darken_rect);
+        // Calculate breathing RGB effect (slow sine wave)
+        float breathe = (sinf(SDL_GetTicks() / 800.0f) + 1.0f) / 2.0f; // 0.0 to 1.0
+        
+        // Question text at upper area
+        int question_y = window_h / 4;
+        SDL_Surface *q_surf = TTF_RenderText_Blended(gs->font_bold, entry->text, 0, 
+                                                    (SDL_Color){255, 255, 255, 255});
+        if (q_surf) {
+            SDL_Texture *q_tex = SDL_CreateTextureFromSurface(renderer, q_surf);
+            float q_w, q_h;
+            SDL_GetTextureSize(q_tex, &q_w, &q_h);
+            SDL_FRect q_rect = {(window_w - q_w) / 2, question_y, q_w, q_h};
+            SDL_RenderTexture(renderer, q_tex, NULL, &q_rect);
+            SDL_DestroyTexture(q_tex);
+            SDL_DestroySurface(q_surf);
+        }
+        
+        // Button settings - LOWER POSITION (near bottom of screen)
+        int btn_w = 700;
+        int btn_h = 90;
+        int btn_x = (window_w - btn_w) / 2;
+        int btn_spacing = 25;
+        int btn_a_y = window_h - 280;  // Lower position
+        int btn_b_y = btn_a_y + btn_h + btn_spacing;
+        
+        // === CHOICE A BUTTON (BREATHING RGB - RED to ORANGE - AGGRESSIVE) ===
+        Uint8 a_r = (Uint8)(200 + 55 * breathe);
+        Uint8 a_g = (Uint8)(50 + 100 * breathe);
+        Uint8 a_b = (Uint8)(50 * (1.0f - breathe));
+        
+        SDL_Color a_bg_base = {a_r / 3, a_g / 3, a_b / 3, 220};
+        SDL_Color a_bg_hover = {a_r / 2, a_g / 2, a_b / 2, 240};
+        SDL_Color a_border = {a_r, a_g, a_b, 255};
+        
+        SDL_Color a_bg_color = gs->choice_a_hovered ? a_bg_hover : a_bg_base;
+        
+        // Button background with glow
+        gs->choice_a_rect = (SDL_FRect){btn_x, btn_a_y, btn_w, btn_h};
+        SDL_SetRenderDrawColor(renderer, a_bg_color.r, a_bg_color.g, a_bg_color.b, a_bg_color.a);
+        SDL_RenderFillRect(renderer, &gs->choice_a_rect);
+        
+        // Animated border (thicker when hovered)
+        int border_thickness = gs->choice_a_hovered ? 4 : 2;
+        SDL_SetRenderDrawColor(renderer, a_border.r, a_border.g, a_border.b, a_border.a);
+        for (int i = 0; i < border_thickness; i++) {
+            SDL_FRect border_rect = {
+                btn_x - i, 
+                btn_a_y - i, 
+                btn_w + i * 2, 
+                btn_h + i * 2
+            };
+            SDL_RenderRect(renderer, &border_rect);
+        }
+        
+        // Inner glow line
+        SDL_SetRenderDrawColor(renderer, a_r, a_g, a_b, (Uint8)(100 + 100 * breathe));
+        SDL_FRect inner_glow = {btn_x + 4, btn_a_y + 4, btn_w - 8, btn_h - 8};
+        SDL_RenderRect(renderer, &inner_glow);
+        
+        // Choice A text
+        SDL_Surface *a_surf = TTF_RenderText_Blended(gs->font_bold, entry->choice_a, 0,
+                                                    (SDL_Color){255, 255, 255, 255});
+        if (a_surf) {
+            SDL_Texture *a_tex = SDL_CreateTextureFromSurface(renderer, a_surf);
+            float a_w, a_h;
+            SDL_GetTextureSize(a_tex, &a_w, &a_h);
+            SDL_FRect a_text_rect = {
+                btn_x + (btn_w - a_w) / 2,
+                btn_a_y + (btn_h - a_h) / 2,
+                a_w, a_h
+            };
+            SDL_RenderTexture(renderer, a_tex, NULL, &a_text_rect);
+            SDL_DestroyTexture(a_tex);
+            SDL_DestroySurface(a_surf);
+        }
+        
+        // === CHOICE B BUTTON (BREATHING RGB - BLUE to CYAN - CALM) ===
+        Uint8 b_r = (Uint8)(50 * (1.0f - breathe));
+        Uint8 b_g = (Uint8)(100 + 100 * breathe);
+        Uint8 b_b = (Uint8)(200 + 55 * breathe);
+        
+        SDL_Color b_bg_base = {b_r / 3, b_g / 3, b_b / 3, 220};
+        SDL_Color b_bg_hover = {b_r / 2, b_g / 2, b_b / 2, 240};
+        SDL_Color b_border = {b_r, b_g, b_b, 255};
+        
+        SDL_Color b_bg_color = gs->choice_b_hovered ? b_bg_hover : b_bg_base;
+        
+        // Button background with glow
+        gs->choice_b_rect = (SDL_FRect){btn_x, btn_b_y, btn_w, btn_h};
+        SDL_SetRenderDrawColor(renderer, b_bg_color.r, b_bg_color.g, b_bg_color.b, b_bg_color.a);
+        SDL_RenderFillRect(renderer, &gs->choice_b_rect);
+        
+        // Animated border
+        border_thickness = gs->choice_b_hovered ? 4 : 2;
+        SDL_SetRenderDrawColor(renderer, b_border.r, b_border.g, b_border.b, b_border.a);
+        for (int i = 0; i < border_thickness; i++) {
+            SDL_FRect border_rect = {
+                btn_x - i, 
+                btn_b_y - i, 
+                btn_w + i * 2, 
+                btn_h + i * 2
+            };
+            SDL_RenderRect(renderer, &border_rect);
+        }
+        
+        // Inner glow line
+        SDL_SetRenderDrawColor(renderer, b_r, b_g, b_b, (Uint8)(100 + 100 * breathe));
+        SDL_FRect inner_glow_b = {btn_x + 4, btn_b_y + 4, btn_w - 8, btn_h - 8};
+        SDL_RenderRect(renderer, &inner_glow_b);
+        
+        // Choice B text
+        SDL_Surface *b_surf = TTF_RenderText_Blended(gs->font_bold, entry->choice_b, 0,
+                                                    (SDL_Color){255, 255, 255, 255});
+        if (b_surf) {
+            SDL_Texture *b_tex = SDL_CreateTextureFromSurface(renderer, b_surf);
+            float b_w, b_h;
+            SDL_GetTextureSize(b_tex, &b_w, &b_h);
+            SDL_FRect b_text_rect = {
+                btn_x + (btn_w - b_w) / 2,
+                btn_b_y + (btn_h - b_h) / 2,
+                b_w, b_h
+            };
+            SDL_RenderTexture(renderer, b_tex, NULL, &b_text_rect);
+            SDL_DestroyTexture(b_tex);
+            SDL_DestroySurface(b_surf);
+        }
+        
+        // Hint text with subtle breathing
+        SDL_Color hint_color = {
+            (Uint8)(200 + 55 * breathe),
+            (Uint8)(200 + 55 * breathe),
+            (Uint8)(200 + 55 * breathe),
+            220
+        };
+        const char *hint = "Click your choice";
+        SDL_Surface *hint_surf = TTF_RenderText_Blended(gs->font_dialogue, hint, 0, hint_color);
+        if (hint_surf) {
+            SDL_Texture *hint_tex = SDL_CreateTextureFromSurface(renderer, hint_surf);
+            float hint_w, hint_h;
+            SDL_GetTextureSize(hint_tex, &hint_w, &hint_h);
+            SDL_FRect hint_rect = {
+                (window_w - hint_w) / 2,
+                btn_b_y + btn_h + 30,
+                hint_w, hint_h
+            };
+            SDL_RenderTexture(renderer, hint_tex, NULL, &hint_rect);
+            SDL_DestroyTexture(hint_tex);
+            SDL_DestroySurface(hint_surf);
+        }
+        
+        // Skip normal dialogue rendering when showing choices
+        return;
     }
     
-    // === DRAW NPC PORTRAIT (LEFT SIDE) ===
-    if (!gs->player_speaking) {
+    // === DRAW NPC PORTRAIT (LEFT SIDE) - only if speaker is NOT "You" ===
+    if (!is_player_speaking) {
         int portrait_w = PORTRAIT_WIDTH;
         int portrait_h = PORTRAIT_HEIGHT;
         int portrait_x = PORTRAIT_OFFSET_X;
         int portrait_y = window_h - portrait_h - PORTRAIT_OFFSET_Y;
-        
-        if (gs->waiting_for_player_choice) {
-            SDL_SetTextureAlphaMod(gs->npc_idle_texture, 150);
-        } else {
-            SDL_SetTextureAlphaMod(gs->npc_idle_texture, 255);
-        }
         
         if (gs->npc_idle_texture) {
             SDL_FRect src = {
@@ -542,12 +744,10 @@ void dialogue_render(SDL_Renderer *renderer, GameScreen *gs) {
             SDL_FRect dst = {portrait_x, portrait_y, portrait_w, portrait_h};
             SDL_RenderTexture(renderer, gs->npc_idle_texture, &src, &dst);
         }
-        
-        SDL_SetTextureAlphaMod(gs->npc_idle_texture, 255);
     }
     
-    // === DRAW PLAYER PORTRAIT (RIGHT SIDE) when player speaking ===
-    if (gs->player_speaking) {
+    // === DRAW PLAYER PORTRAIT (RIGHT SIDE) when player is speaking ===
+    if (is_player_speaking) {
         int portrait_w = PLAYER_PORTRAIT_WIDTH;
         int portrait_h = PLAYER_PORTRAIT_HEIGHT;
         int portrait_x = window_w - portrait_w - PLAYER_PORTRAIT_OFFSET_X;
@@ -566,193 +766,111 @@ void dialogue_render(SDL_Renderer *renderer, GameScreen *gs) {
     }
     
     // === DRAW DIALOGUE BOX (for normal dialogue) ===
-    if (!gs->waiting_for_player_choice) {
-        int box_h = DIALOGUE_BOX_HEIGHT;
-        int box_w = window_w - (DIALOGUE_BOX_MARGIN * 2);
-        int box_x = DIALOGUE_BOX_MARGIN;
-        int box_y = window_h - box_h - DIALOGUE_BOX_MARGIN;
-        
-        gs->dialogue_box_rect = (SDL_FRect){box_x, box_y, box_w, box_h};
-        
-        if (gs->dialogue_box_texture) {
-            SDL_FRect box_rect = {box_x, box_y, box_w, box_h};
-            SDL_RenderTexture(renderer, gs->dialogue_box_texture, NULL, &box_rect);
-        }
-        
-        // Text area
-        int text_x = box_x + 40;
-        int text_y = box_y + 25;
-        int max_text_w = box_w - 80;
-        
-        // Speaker name
-        const char *speaker = gs->dialogue_lines[gs->dialogue_index].speaker;
-        SDL_Color name_color = gs->player_speaking ? (SDL_Color){100, 200, 255, 255} : (SDL_Color){255, 215, 100, 255};
-        
-        if (!gs->dialogue_name_texture) {
-            SDL_Surface *name_surf = TTF_RenderText_Blended(gs->font_bold ? gs->font_bold : gs->font, 
-                                                            speaker, 0, name_color);
-            if (name_surf) {
-                gs->dialogue_name_texture = SDL_CreateTextureFromSurface(renderer, name_surf);
-                SDL_DestroySurface(name_surf);
-            }
-        }
-        
-        if (gs->dialogue_name_texture) {
-            float name_w, name_h;
-            SDL_GetTextureSize(gs->dialogue_name_texture, &name_w, &name_h);
-            SDL_FRect name_rect = {text_x, text_y, name_w, name_h};
-            SDL_RenderTexture(renderer, gs->dialogue_name_texture, NULL, &name_rect);
-            text_y += name_h + 15;
-        }
-        
-        // Dialogue text
-        const char *full_text = gs->dialogue_lines[gs->dialogue_index].text;
-        char display_text[MAX_LINE_LENGTH];
-        strncpy(display_text, full_text, gs->dialogue_char_index);
-        display_text[gs->dialogue_char_index] = '\0';
-        
-        SDL_Color text_color = {255, 255, 255, 255};
-        SDL_Surface *text_surf = TTF_RenderText_Blended_Wrapped(gs->font_dialogue, 
-                                                                display_text, 0, 
-                                                                text_color, max_text_w);
-        if (text_surf) {
-            SDL_Texture *text_tex = SDL_CreateTextureFromSurface(renderer, text_surf);
-            float text_w, text_h;
-            SDL_GetTextureSize(text_tex, &text_w, &text_h);
-            
-            SDL_FRect text_rect = {text_x, text_y, text_w, text_h};
-            SDL_RenderTexture(renderer, text_tex, NULL, &text_rect);
-            SDL_DestroyTexture(text_tex);
-            SDL_DestroySurface(text_surf);
-        }
-        
-        // Continue indicator
-        if (gs->dialogue_text_complete) {
-            float blink = (SDL_GetTicks() / 500) % 2;
-            if (blink) {
-                SDL_Color indicator_color = {255, 255, 255, 200};
-                SDL_Surface *ind_surf = TTF_RenderText_Blended(gs->font, "▼", 0, indicator_color);
-                if (ind_surf) {
-                    SDL_Texture *ind_tex = SDL_CreateTextureFromSurface(renderer, ind_surf);
-                    float ind_w, ind_h;
-                    SDL_GetTextureSize(ind_tex, &ind_w, &ind_h);
-                    
-                    SDL_FRect ind_rect = {
-                        box_x + box_w - ind_w - 30, 
-                        box_y + box_h - ind_h - 20, 
-                        ind_w, 
-                        ind_h
-                    };
-                    SDL_RenderTexture(renderer, ind_tex, NULL, &ind_rect);
-                    SDL_DestroyTexture(ind_tex);
-                    SDL_DestroySurface(ind_surf);
-                }
-            }
-        }
-        
-        // Hint text
-        SDL_Color hint_color = {180, 180, 180, 180};
-        const char *hint_text = gs->dialogue_text_complete ? "Click, E, Enter, or Space to continue" : "Click, E, Enter, or Space to skip";
-        SDL_Surface *hint_surf = TTF_RenderText_Blended(gs->font_dialogue, hint_text, 0, hint_color);
-        if (hint_surf) {
-            SDL_Texture *hint_tex = SDL_CreateTextureFromSurface(renderer, hint_surf);
-            float hint_w, hint_h;
-            SDL_GetTextureSize(hint_tex, &hint_w, &hint_h);
-            
-            SDL_FRect hint_rect = {
-                (window_w - hint_w) / 2,
-                window_h - 35,
-                hint_w,
-                hint_h
-            };
-            SDL_RenderTexture(renderer, hint_tex, NULL, &hint_rect);
-            SDL_DestroyTexture(hint_tex);
-            SDL_DestroySurface(hint_surf);
+    int box_h = DIALOGUE_BOX_HEIGHT;
+    int box_w = window_w - (DIALOGUE_BOX_MARGIN * 2);
+    int box_x = DIALOGUE_BOX_MARGIN;
+    int box_y = window_h - box_h - DIALOGUE_BOX_MARGIN;
+    
+    gs->dialogue_box_rect = (SDL_FRect){box_x, box_y, box_w, box_h};
+    
+    if (gs->dialogue_box_texture) {
+        SDL_FRect box_rect = {box_x, box_y, box_w, box_h};
+        SDL_RenderTexture(renderer, gs->dialogue_box_texture, NULL, &box_rect);
+    }
+    
+    // Text area
+    int text_x = box_x + 40;
+    int text_y = box_y + 25;
+    int max_text_w = box_w - 80;
+
+    // Speaker name - use entry->speaker directly
+    const char *speaker = entry->speaker;
+    SDL_Color name_color = is_player_speaking ? 
+        (SDL_Color){100, 200, 255, 255} : 
+        (SDL_Color){255, 215, 100, 255};
+    
+    if (!gs->dialogue_name_texture) {
+        SDL_Surface *name_surf = TTF_RenderText_Blended(gs->font_bold ? gs->font_bold : gs->font, 
+                                                        speaker, 0, name_color);
+        if (name_surf) {
+            gs->dialogue_name_texture = SDL_CreateTextureFromSurface(renderer, name_surf);
+            SDL_DestroySurface(name_surf);
         }
     }
     
-        // === DRAW ANSWER BAR LAST (IN FRONT OF EVERYTHING) ===
-    if (gs->waiting_for_player_choice) {
-        const char *answer_text = "I'm not retreating!";
-        SDL_Color answer_color = {255, 80, 80, 255};
+    if (gs->dialogue_name_texture) {
+        float name_w, name_h;
+        SDL_GetTextureSize(gs->dialogue_name_texture, &name_w, &name_h);
+        SDL_FRect name_rect = {text_x, text_y, name_w, name_h};
+        SDL_RenderTexture(renderer, gs->dialogue_name_texture, NULL, &name_rect);
+        text_y += name_h + 15;
+    }
+    
+    // Dialogue text
+    const char *full_text = entry->text;
+    char display_text[MAX_LINE_LENGTH];
+    strncpy(display_text, full_text, gs->dialogue_char_index);
+    display_text[gs->dialogue_char_index] = '\0';
+    
+    SDL_Color text_color = {255, 255, 255, 255};
+    SDL_Surface *text_surf = TTF_RenderText_Blended_Wrapped(gs->font_dialogue, 
+                                                            display_text, 0, 
+                                                            text_color, max_text_w);
+    if (text_surf) {
+        SDL_Texture *text_tex = SDL_CreateTextureFromSurface(renderer, text_surf);
+        float text_w, text_h;
+        SDL_GetTextureSize(text_tex, &text_w, &text_h);
         
-        float pulse = 0.8f + 0.2f * sinf(SDL_GetTicks() / 200.0f);
-        SDL_Color glow_color = {
-            (Uint8)(255 * pulse),
-            (Uint8)(100 * pulse),
-            (Uint8)(100 * pulse),
-            255
+        SDL_FRect text_rect = {text_x, text_y, text_w, text_h};
+        SDL_RenderTexture(renderer, text_tex, NULL, &text_rect);
+        SDL_DestroyTexture(text_tex);
+        SDL_DestroySurface(text_surf);
+    }
+    
+    // Continue indicator
+    if (gs->dialogue_text_complete) {
+        float blink = (SDL_GetTicks() / 500) % 2;
+        if (blink) {
+            SDL_Color indicator_color = {255, 255, 255, 200};
+            SDL_Surface *ind_surf = TTF_RenderText_Blended(gs->font, "▼", 0, indicator_color);
+            if (ind_surf) {
+                SDL_Texture *ind_tex = SDL_CreateTextureFromSurface(renderer, ind_surf);
+                float ind_w, ind_h;
+                SDL_GetTextureSize(ind_tex, &ind_w, &ind_h);
+                
+                SDL_FRect ind_rect = {
+                    box_x + box_w - ind_w - 30, 
+                    box_y + box_h - ind_h - 20, 
+                    ind_w, 
+                    ind_h
+                };
+                SDL_RenderTexture(renderer, ind_tex, NULL, &ind_rect);
+                SDL_DestroyTexture(ind_tex);
+                SDL_DestroySurface(ind_surf);
+            }
+        }
+    }
+    
+    // Hint text
+    SDL_Color hint_color = {180, 180, 180, 180};
+    const char *hint_text = gs->dialogue_text_complete ? 
+        "Click, E, Enter, or Space to continue" : 
+        "Click, E, Enter, or Space to skip";
+    SDL_Surface *hint_surf = TTF_RenderText_Blended(gs->font_dialogue, hint_text, 0, hint_color);
+    if (hint_surf) {
+        SDL_Texture *hint_tex = SDL_CreateTextureFromSurface(renderer, hint_surf);
+        float hint_w, hint_h;
+        SDL_GetTextureSize(hint_tex, &hint_w, &hint_h);
+        
+        SDL_FRect hint_rect = {
+            (window_w - hint_w) / 2,
+            window_h - 35,
+            hint_w,
+            hint_h
         };
-        
-        int bar_padding = 40;
-        int bar_w, bar_h;
-        int bar_x, bar_y;
-        int hint_y;
-        
-        // Draw FULL SCREEN dark background first (cover everything)
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 220);
-        SDL_FRect full_screen_dark = {0, 0, window_w, window_h};
-        SDL_RenderFillRect(renderer, &full_screen_dark);
-        
-        SDL_Surface *answer_surf = TTF_RenderText_Blended(gs->font_bold, answer_text, 0, glow_color);
-        if (answer_surf) {
-            SDL_Texture *answer_tex = SDL_CreateTextureFromSurface(renderer, answer_surf);
-            float text_w, text_h;
-            SDL_GetTextureSize(answer_tex, &text_w, &text_h);
-            
-            bar_w = text_w + (bar_padding * 2);
-            bar_h = text_h + (bar_padding * 2);
-            
-            bar_x = (window_w - bar_w) / 2;
-            bar_y = (window_h - bar_h) / 2;
-            
-            hint_y = bar_y + bar_h + 80;
-            
-            // Draw bar background
-            SDL_SetRenderDrawColor(renderer, 80, 20, 20, 240);
-            gs->answer_bar_rect = (SDL_FRect){bar_x, bar_y, bar_w, bar_h};
-            SDL_RenderFillRect(renderer, &gs->answer_bar_rect);
-            
-            // Bright border
-            SDL_SetRenderDrawColor(renderer, 255, 100, 100, 255);
-            SDL_RenderRect(renderer, &gs->answer_bar_rect);
-            
-            // Inner highlight border
-            SDL_SetRenderDrawColor(renderer, 255, 150, 150, 200);
-            SDL_FRect inner_rect = {bar_x + 3, bar_y + 3, bar_w - 6, bar_h - 6};
-            SDL_RenderRect(renderer, &inner_rect);
-            
-            // Draw text
-            SDL_FRect text_rect = {
-                bar_x + bar_padding,
-                bar_y + bar_padding,
-                text_w,
-                text_h
-            };
-            SDL_RenderTexture(renderer, answer_tex, NULL, &text_rect);
-            SDL_DestroyTexture(answer_tex);
-            SDL_DestroySurface(answer_surf);
-        }
-        
-        // Draw hint BELOW the centered bar
-        SDL_Color hint_color = {220, 220, 220, 200};
-        const char *hint = ">> CLICK TO RESPOND <<";
-        SDL_Surface *hint_surf = TTF_RenderText_Blended(gs->font_bold, hint, 0, hint_color);
-        if (hint_surf) {
-            SDL_Texture *hint_tex = SDL_CreateTextureFromSurface(renderer, hint_surf);
-            float hint_w, hint_h;
-            SDL_GetTextureSize(hint_tex, &hint_w, &hint_h);
-            
-            SDL_FRect hint_rect = {
-                (window_w - hint_w) / 2,
-                hint_y,
-                hint_w,
-                hint_h
-            };
-            SDL_RenderTexture(renderer, hint_tex, NULL, &hint_rect);
-            SDL_DestroyTexture(hint_tex);
-            SDL_DestroySurface(hint_surf);
-        }
+        SDL_RenderTexture(renderer, hint_tex, NULL, &hint_rect);
+        SDL_DestroyTexture(hint_tex);
+        SDL_DestroySurface(hint_surf);
     }
 }
 
@@ -943,7 +1061,7 @@ void game_screen_handle_input(GameScreen *gs, SDL_KeyboardEvent *key) {
 
         case SDL_SCANCODE_E:
             if (is_pressed && gs->player_near_npc && !gs->in_dialogue) {
-                dialogue_start(gs, NULL);
+                dialogue_start_script(gs, NULL, "game_assets/dialogues/naberius_encounter.txt");
             }
             break;
             
@@ -961,30 +1079,6 @@ void game_screen_handle_mouse(GameScreen *gs, SDL_MouseButtonEvent *mouse, SDL_R
     }
 }
 
-void dialogue_handle_player_choice(GameScreen *gs, SDL_Renderer *renderer) {
-    if (!gs || !gs->waiting_for_player_choice) return;
-    
-    // Player clicked the answer bar
-    gs->waiting_for_player_choice = false;
-    gs->player_speaking = true;
-    
-    // Set up player dialogue
-    strcpy(gs->dialogue_lines[0].speaker, "You");
-    strcpy(gs->dialogue_lines[0].text, gs->player_dialogue_text);
-    gs->dialogue_index = 0;
-    gs->dialogue_count = 1;
-    gs->dialogue_char_index = 0;
-    gs->dialogue_timer = 0.0f;
-    gs->dialogue_text_complete = false;
-    
-    if (gs->dialogue_name_texture) {
-        SDL_DestroyTexture(gs->dialogue_name_texture);
-        gs->dialogue_name_texture = NULL;
-    }
-    
-    printf("Player chose: %s\n", gs->player_dialogue_text);
-}
-
 void game_screen_destroy(GameScreen *gs) {
     if (gs) {
         if (gs->title_text) SDL_DestroyTexture(gs->title_text);
@@ -998,6 +1092,10 @@ void game_screen_destroy(GameScreen *gs) {
         if (gs->npc_portrait) SDL_DestroyTexture(gs->npc_portrait);
         if (gs->dialogue_box_texture) SDL_DestroyTexture(gs->dialogue_box_texture);
         if (gs->dialogue_name_texture) SDL_DestroyTexture(gs->dialogue_name_texture);
+
+        if (gs->current_script) {
+            dialogue_destroy(gs->current_script);
+        }
         free(gs);
         printf("Game screen destroyed\n");
     }

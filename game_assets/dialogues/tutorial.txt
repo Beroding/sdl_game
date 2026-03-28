@@ -1,0 +1,16 @@
+# Tutorial NPC Dialogue
+Old Man: Welcome, young soul. You seem lost.
+Old Man: This is the Threshold - the space between worlds.
+Old Man: Many have entered. Few have returned.
+
+[CHOICE] Old Man | Will you listen to my guidance? | Yes, teach me. | No, I know everything. | 4 | 7
+
+# Yes path
+Old Man: Good. First, you must learn to move. Use WASD or Arrow keys.
+Old Man: Press E to interact with beings like myself.
+Old Man: And beware the Gate Keeper... he does not take kindly to trespassers.
+Old Man: Now go. Your fate awaits.
+
+# No path
+Old Man: Arrogance... that will be your downfall.
+Old Man: Very well. Face the darkness alone, if you must.

@@ -10,7 +10,8 @@
 #include "game_screen.h"
 #include "battle_system.h"
 #include "opening_animation.h"
-
+#include "dialogue_loader.h"
+#include "pause_menu.h"  // NEW
 
 #define SDL_FLAGS SDL_INIT_VIDEO
 
@@ -38,6 +39,7 @@ struct Game
     GameState state;
     OpeningAnimation *opening;
     BattleSystem *battle;
+    PauseMenu *pause_menu;  // NEW
 };
 
 bool game_init_sdl(struct Game *g);
@@ -106,6 +108,7 @@ bool game_init_sdl(struct Game *g)
 
     g->game_screen = NULL;
     g->battle = NULL;
+    g->pause_menu = NULL;  // Will be created when needed
 
     return true;
 }
@@ -145,6 +148,7 @@ void game_free(struct Game **game)
         game_screen_destroy(g->game_screen);
         opening_destroy(g->opening);
         battle_destroy(g->battle);
+        pause_menu_destroy(g->pause_menu);  // NEW
 
         if(g->renderer) 
         {
@@ -188,6 +192,10 @@ void start_new_game(struct Game *g)
         return;
     }
     
+    // Create pause menu for this game session
+    pause_menu_destroy(g->pause_menu);
+    g->pause_menu = pause_menu_create(g->renderer, w, h);
+    
     g->state = STATE_PLAYING;
 }
 
@@ -195,16 +203,50 @@ void return_to_menu(struct Game *g)
 {
     printf("Returning to menu...\n");
     g->state = STATE_MENU;
+    // Don't destroy pause menu, just close it
+    if (g->pause_menu) {
+        pause_menu_close(g->pause_menu);
+    }
 }
 
 void game_events(struct Game *g)
 {
     while (SDL_PollEvent(&g->event)) 
     {
+        // Handle pause menu first if open
+        if (g->pause_menu && pause_menu_is_open(g->pause_menu)) {
+            switch (g->event.type) {
+                case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                    if (pause_menu_handle_mouse(g->pause_menu, &g->event.button)) {
+                        // Check if exit was requested
+                        if (g->pause_menu->exit_to_menu) {
+                            g->pause_menu->exit_to_menu = false;
+                            return_to_menu(g);
+                        }
+                        continue; // Event handled
+                    }
+                    break;
+                case SDL_EVENT_KEY_DOWN:
+                    if (pause_menu_handle_key(g->pause_menu, &g->event.key)) {
+                        // Check if exit was requested
+                        if (g->pause_menu->exit_to_menu) {
+                            g->pause_menu->exit_to_menu = false;
+                            return_to_menu(g);
+                        }
+                        continue; // Event handled
+                    }
+                    break;
+                case SDL_EVENT_KEY_UP:
+                    // Don't pass key events to game when paused
+                    continue;
+            }
+        }
+        
         switch (g->event.type) 
         {
             case SDL_EVENT_KEY_UP:
-                if (g->state == STATE_PLAYING && g->game_screen) {
+                if (g->state == STATE_PLAYING && g->game_screen && 
+                    (!g->pause_menu || !pause_menu_is_open(g->pause_menu))) {
                     game_screen_handle_input(g->game_screen, &g->event.key);
                 }
                 break;
@@ -218,7 +260,8 @@ void game_events(struct Game *g)
                     battle_handle_mouse(g->battle, &g->event.button);
                 }
                 // Handle mouse in game screen (for dialogue)
-                if (g->state == STATE_PLAYING && g->game_screen) {
+                if (g->state == STATE_PLAYING && g->game_screen &&
+                    (!g->pause_menu || !pause_menu_is_open(g->pause_menu))) {
                     game_screen_handle_mouse(g->game_screen, &g->event.button, g->renderer);
                 }
                 // Handle menu clicks
@@ -249,6 +292,27 @@ void game_events(struct Game *g)
                 if (g->state == STATE_BATTLE && g->battle) {
                     battle_handle_key(g->battle, &g->event.key);
                 }
+                
+                // ESC to toggle pause menu during gameplay
+                if (g->state == STATE_PLAYING && g->game_screen) {
+                    if (g->event.key.scancode == SDL_SCANCODE_ESCAPE) {
+                        // Check if in dialogue first
+                        if (g->game_screen && !g->game_screen->in_dialogue) {
+                            if (g->pause_menu) {
+                                if (pause_menu_is_open(g->pause_menu)) {
+                                    pause_menu_close(g->pause_menu);
+                                } else {
+                                    pause_menu_open(g->pause_menu);
+                                }
+                            }
+                        }
+                        break; // Handled
+                    } else if (!g->pause_menu || !pause_menu_is_open(g->pause_menu)) {
+                        game_screen_handle_input(g->game_screen, &g->event.key);
+                    }
+                    break;
+                }
+                
                 if (g->state == STATE_MENU) {
                     int index = menu_handle_key(g->menu, &g->event.key);
                     if (index >= 0) {
@@ -259,17 +323,6 @@ void game_events(struct Game *g)
                             case 2: g->state = STATE_CREDITS; break;
                             case 3: g->isRunning = false; break;
                         }
-                    }
-                }
-                else if (g->state == STATE_PLAYING) {
-                    // ESC returns to menu (only if not in dialogue)
-                    if (g->event.key.scancode == SDL_SCANCODE_ESCAPE) {
-                        // Check if in dialogue first
-                        if (g->game_screen && !g->game_screen->in_dialogue) {
-                            return_to_menu(g);
-                        }
-                    } else {
-                        game_screen_handle_input(g->game_screen, &g->event.key);
                     }
                 }
                 else if (g->state == STATE_CREDITS) {
@@ -284,11 +337,21 @@ void game_events(struct Game *g)
 }
 
 void game_update(struct Game *g) {
+    // Update pause menu animation
+    if (g->pause_menu) {
+        pause_menu_update(g->pause_menu, 0.016f);
+    }
+    
     switch (g->state) {
         case STATE_MENU:
             break;
             
         case STATE_PLAYING:
+            // Don't update game world when paused
+            if (g->pause_menu && pause_menu_is_open(g->pause_menu)) {
+                break;
+            }
+            
             if (g->game_screen) {
                 game_screen_update(g->game_screen, 0.016f);
                 
@@ -313,7 +376,7 @@ void game_update(struct Game *g) {
             }
             break;
             
-        case STATE_OPENING_ANIMATION:  // NEW
+        case STATE_OPENING_ANIMATION:
             if (g->opening) {
                 opening_update(g->opening, 0.016f);
                 
@@ -363,9 +426,13 @@ void game_draw(struct Game *g) {
             
         case STATE_PLAYING:
             if (g->game_screen) game_screen_render(g->renderer, g->game_screen);
+            // Render pause menu on top if open
+            if (g->pause_menu && pause_menu_is_open(g->pause_menu)) {
+                pause_menu_render(g->renderer, g->pause_menu);
+            }
             break;
             
-        case STATE_OPENING_ANIMATION:  // NEW
+        case STATE_OPENING_ANIMATION:
             // Render the game screen behind (frozen)
             if (g->game_screen) game_screen_render(g->renderer, g->game_screen);
             // Render animation on top

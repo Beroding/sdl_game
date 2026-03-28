@@ -1,0 +1,20 @@
+# Naberius Gate Keeper Encounter
+# Format: Speaker: Text | NextLine
+
+Naberius: ...
+Naberius: I am Naberius, the Gate Keeper. I am the voice that whispers in the silence before the fall. Some call me a demon, a warden, a crow perched upon the edge of eternity. | 2
+Naberius: Vermin Soul, You are not supposed to be here... Retrace your steps, NOW! | 3
+
+[CHOICE] You | How will you respond? | I'm not retreating! | ...Fine, I'll leave. | 4 | 8
+
+# Choice A - Stand your ground (line 4)
+You: I'm not taking any step behind my back! | 5
+Naberius: Kekekekek, you misunderstood it human. That was not a request. That was the only mercy I offer and you just threw it back. | 6
+Naberius: So now… we do this the HARD WAY. Don't disappoint me. | 7
+[BATTLE]
+
+# Choice B - Leave (line 8)
+You: ...Fine, I'll leave. | 9
+Naberius: Wise choice, vermin. The Gate is not for the weak. | 10
+
+# End
