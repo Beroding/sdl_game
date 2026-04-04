@@ -1,0 +1,4 @@
+Guide: Hey, traveler! I have something important to show you. Follow me!
+You: Lead the way.
+Guide: The path is marked with golden arrows. Good luck!
+Guide: (The guide disappears, leaving a trail of arrows.)

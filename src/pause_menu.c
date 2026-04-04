@@ -350,6 +350,16 @@ void pause_menu_render(SDL_Renderer *renderer, PauseMenu *menu) {
             SDL_DestroySurface(hint_surf);
         }
     }
+
+    // SDL_Rect volume_rect = {x, y, 200, 20};
+    // SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+    // SDL_RenderFillRect(renderer, &volume_rect);
+    
+    // // Volume fill
+    // int fill_w = (int)(200 * pm->music_volume);
+    // SDL_Rect fill_rect = {x, y, fill_w, 20};
+    // SDL_SetRenderDrawColor(renderer, 100, 200, 100, 255);
+    // SDL_RenderFillRect(renderer, &fill_rect);
 }
 
 // ----------------------------------------------------------------------------

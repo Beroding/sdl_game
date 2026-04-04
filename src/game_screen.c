@@ -6,12 +6,10 @@
 // camera following, and a full dialogue system that supports branching conversations,
 // choices, and battle triggers.
 //
-// Key assumptions:
-// - Sprite sheets have fixed frame dimensions (PC: 38x49, 7 frames; NPC: 65x60, 2 frames)
-// - Player animation frames are stored in a single row at Y=207 in the texture
-// - NPC frames are arranged in rows: row 0 = facing left animation, row 3 = facing right
-// - Dialogue files follow the format defined in dialogue_loader.h
-// - Font "Roboto_Medium.ttf" is present in game_assets/
+// New features:
+// - Multiple NPCs (up to 4) with movement (patrol, random walk)
+// - Arrow trail system that appears after interacting with a special NPC
+// - Adjustable player spawn location
 // ============================================================================
 
 #include <stdio.h>
@@ -25,6 +23,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include "../include/game_screen.h"
+#include "../include/music_system.h"
 
 // ----------------------------------------------------------------------------
 // Constants – Control how the game feels
@@ -34,6 +33,8 @@
 #define PC_FRAME_WIDTH 38
 #define PC_FRAME_HEIGHT 49
 #define PC_FRAME_COUNT 7               // Number of frames in the walk/run cycle
+
+#define FOOTSTEP_INTERVAL 0.25f
 
 // Animation speed: lower values = faster animation
 #define ANIMATION_SPEED 4.5            // Frames of game loop per sprite change
@@ -53,7 +54,6 @@
 #define DIALOGUE_TEXT_SIZE 26          // Font size for dialogue text
 #define DIALOGUE_NAME_SIZE 30          // Font size for speaker name
 #define DIALOGUE_CHAR_DELAY 0.03f      // Seconds between letters in typewriter effect
-#define DIALOGUE_CONTINUE_DELAY 0.5f   // (unused) Originally for auto‑advance
 
 // NPC portrait size and position (left side of screen)
 #define PORTRAIT_WIDTH 500
@@ -113,6 +113,140 @@ static SDL_Texture* create_dialogue_box(SDL_Renderer *renderer, int width, int h
 }
 
 // ----------------------------------------------------------------------------
+// Generate arrow trail from player to a destination
+// ----------------------------------------------------------------------------
+static void generate_trail(GameScreen *gs) {
+    // Destination coordinates (adjust to your map)
+    float dest_x = 1200.0f;
+    float dest_y = 700.0f;
+    
+    // Simple linear interpolation with step size
+    float step = 50.0f; // pixels between markers
+    float dx = dest_x - gs->player_x;
+    float dy = dest_y - gs->player_y;
+    float dist = sqrtf(dx*dx + dy*dy);
+    int num_points = (int)(dist / step) + 1;
+    if (num_points > MAX_TRAIL_POINTS) num_points = MAX_TRAIL_POINTS;
+    
+    gs->trail_count = 0;
+    for (int i = 0; i <= num_points; i++) {
+        float t = (float)i / num_points;
+        gs->trail_points[i].x = gs->player_x + dx * t;
+        gs->trail_points[i].y = gs->player_y + dy * t;
+        gs->trail_points[i].active = true;
+        gs->trail_points[i].lifetime = 30.0f; // seconds
+        gs->trail_count++;
+    }
+    
+    gs->trail_active = true;
+    gs->trail_activation_time = gs->total_play_time;
+    printf("Trail generated with %d points\n", gs->trail_count);
+}
+
+// ----------------------------------------------------------------------------
+// Update a single NPC's movement based on its pattern
+// ----------------------------------------------------------------------------
+static void update_npc_movement(NPC *npc, float delta_time) {
+    if (!npc->is_active) return;
+    
+    switch (npc->move_pattern) {
+        case 0: // idle
+            npc->is_moving = false;
+        
+        npc->anim_timer += delta_time;
+        if (npc->anim_timer >= 0.3f) {  // Slower frame rate for idle (0.5s per frame)
+            npc->anim_timer = 0.0f;
+            npc->current_frame = (npc->current_frame + 1) % NPC_FRAME_COUNT_ANIM;  // Cycle 0,1
+        }
+        break;
+            
+        case 1: // patrol between two points (simple left/right example)
+            {
+                // Define patrol boundaries relative to initial position
+                // (store them in the NPC struct for more flexibility)
+                static float left_bound = 0, right_bound = 0;
+                if (npc->target_x == npc->x) {
+                    // initialise boundaries
+                    left_bound = npc->x - 150;
+                    right_bound = npc->x + 150;
+                    npc->target_x = right_bound;
+                }
+                
+                if (npc->move_timer <= 0.0f) {
+                    // Reverse direction
+                    if (npc->target_x == left_bound) {
+                        npc->target_x = right_bound;
+                    } else {
+                        npc->target_x = left_bound;
+                    }
+                    npc->move_timer = 2.0f; // pause at each end
+                    npc->is_moving = false;
+                } else {
+                    npc->move_timer -= delta_time;
+                }
+                
+                // Move towards target
+                float dx = npc->target_x - npc->x;
+                float dy = npc->target_y - npc->y;
+                float dist = sqrtf(dx*dx + dy*dy);
+                if (dist > 1.0f) {
+                    npc->is_moving = true;
+                    float step = npc->speed * delta_time;
+                    npc->x += (dx / dist) * step;
+                    npc->y += (dy / dist) * step;
+                    // Update facing direction
+                    if (dx > 0) npc->facing_right = true;
+                    else if (dx < 0) npc->facing_right = false;
+                } else {
+                    npc->is_moving = false;
+                }
+            }
+            break;
+            
+        case 2: // random walk (simple)
+            {
+                if (npc->move_timer <= 0.0f) {
+                    // Choose a random direction
+                    float angle = (rand() % 360) * 3.14159f / 180.0f;
+                    float step = 50.0f;
+                    npc->target_x = npc->x + cosf(angle) * step;
+                    npc->target_y = npc->y + sinf(angle) * step;
+                    npc->move_timer = 2.0f;
+                    npc->is_moving = true;
+                } else {
+                    npc->move_timer -= delta_time;
+                }
+                
+                float dx = npc->target_x - npc->x;
+                float dy = npc->target_y - npc->y;
+                float dist = sqrtf(dx*dx + dy*dy);
+                if (dist > 1.0f) {
+                    float step = npc->speed * delta_time;
+                    npc->x += (dx / dist) * step;
+                    npc->y += (dy / dist) * step;
+                    if (dx > 0) npc->facing_right = true;
+                    else if (dx < 0) npc->facing_right = false;
+                } else {
+                    npc->is_moving = false;
+                }
+            }
+            break;
+    }
+    
+    // Update animation (reuse the same frame logic as player)
+    if (npc->is_moving) {
+        npc->anim_timer += delta_time;
+        if (npc->anim_timer >= 0.15f) {
+            npc->anim_timer = 0.0f;
+            npc->current_frame = (npc->current_frame + 1) % 2;
+        }
+    } else if (npc->move_pattern != 0) {  // Only reset frame if not idle
+        npc->current_frame = 0;
+        npc->anim_timer = 0.0f;
+    }
+}
+
+// ----------------------------------------------------------------------------
 // GameScreen creation – load all assets, set up initial state
 // ----------------------------------------------------------------------------
 GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int window_height) {
@@ -139,7 +273,7 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     }
     
     gs->bg_texture = SDL_CreateTextureFromSurface(renderer, surface);
-    SDL_SetTextureScaleMode(gs->bg_texture, SDL_SCALEMODE_NEAREST); // Keep crisp pixels
+    SDL_SetTextureScaleMode(gs->bg_texture, SDL_SCALEMODE_NEAREST);
     SDL_DestroySurface(surface);
 
     if (!gs->bg_texture) {
@@ -221,6 +355,8 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     gs->moving_up = false;
     gs->moving_down = false;
 
+    gs->footstep_timer = 0.0f;
+
     // Camera – starts centred on player
     gs->camera.zoom = ZOOM_LEVEL;
     gs->camera.viewport_w = window_width;
@@ -234,21 +370,56 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     gs->title_text = SDL_CreateTextureFromSurface(renderer, title_surf);
     SDL_DestroySurface(title_surf);
 
-    // Start player in the middle of the map (slightly offset vertically)
-    gs->player_x = gs->map_width / 2.0f;
-    gs->player_y = gs->map_height / 2.0f + 17;
+    // Player spawn – NEW location
+    gs->player_x = 368.0f;
+    gs->player_y = 90.0f;
     gs->score = 0;
     gs->level = 1;
 
-    // Place NPC slightly offset from the player
-    gs->npc_x = gs->player_x + 35;
-    gs->npc_y = gs->player_y - 10;
+    // ------------------------------------------------------------------------
+    // Initialize NPCs
+    // ------------------------------------------------------------------------
+    gs->npc_count = 2;
 
-    // NPC world animation
-    gs->npc_frame = 0;
-    gs->npc_frame_timer = 0.0f;
-    gs->npc_frame_duration = NPC_FRAME_DURATION;
-    gs->npc_facing_right = false;
+    // NPC 0: The original NPC (unchanged position, idle)
+    gs->npcs[0].x = gs->map_width / 2.0f + 35;
+    gs->npcs[0].y = gs->map_height / 2.0f + 7;
+    gs->npcs[0].target_x = gs->npcs[0].x;
+    gs->npcs[0].target_y = gs->npcs[0].y;
+    gs->npcs[0].speed = 0.0f;
+    gs->npcs[0].move_pattern = 0; // idle
+    gs->npcs[0].move_timer = 0.0f;
+    gs->npcs[0].current_frame = 0;
+    gs->npcs[0].anim_timer = 0.0f;
+    gs->npcs[0].facing_right = true;
+    gs->npcs[0].is_moving = false;
+    gs->npcs[0].is_active = true;
+    gs->npcs[0].trigger_trail = false;
+    strcpy(gs->npcs[0].dialogue_file, "game_assets/dialogues/naberius_encounter.txt");
+    gs->npcs[0].dialogue_line = 0;
+
+    // NPC 1: The moving NPC at a different location
+    gs->npcs[1].x = 400.0f;
+    gs->npcs[1].y = 100.0f;
+    gs->npcs[1].target_x = 800.0f;
+    gs->npcs[1].target_y = 400.0f;
+    gs->npcs[1].speed = 80.0f;    // units per second
+    gs->npcs[1].move_pattern = 1;  // patrol
+    gs->npcs[1].move_timer = 2.0f;
+    gs->npcs[1].current_frame = 0;
+    gs->npcs[1].anim_timer = 0.0f;
+    gs->npcs[1].facing_right = true;
+    gs->npcs[1].is_moving = false;
+    gs->npcs[1].is_active = true;
+    gs->npcs[1].trigger_trail = true;  // This NPC will start the trail
+    strcpy(gs->npcs[1].dialogue_file, "game_assets/dialogues/guide_dialogue.txt");
+    gs->npcs[1].dialogue_line = 0;
+
+    // Initialize trail system
+    gs->trail_active = false;
+    gs->trail_count = 0;
+    gs->trail_activation_time = 0.0f;
+    gs->total_play_time = 0.0f;
 
     // Dialogue system initialisation
     gs->in_dialogue = false;
@@ -257,8 +428,6 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     gs->dialogue_area_hovered = false;
     gs->choice_a_hovered = false;
     gs->choice_b_hovered = false;
-
-    // Dialogue box rectangle will be set later when rendering
     gs->dialogue_box_rect = (SDL_FRect){0, 0, 0, 0};
 
     printf("Game screen created\n");
@@ -288,10 +457,12 @@ void update_camera(GameScreen *gs) {
 }
 
 // ----------------------------------------------------------------------------
-// Main game update – movement, animation, and NPC interaction
+// Main game update – movement, animation, NPC interaction, and trail
 // ----------------------------------------------------------------------------
 void game_screen_update(GameScreen *gs, float delta_time) {
     if (!gs) return;
+    
+    gs->total_play_time += delta_time;
     
     // If in dialogue, only update the dialogue system (no movement)
     if (gs->in_dialogue) {
@@ -302,6 +473,17 @@ void game_screen_update(GameScreen *gs, float delta_time) {
     // Determine if player is moving based on held keys
     gs->is_moving = gs->moving_left || gs->moving_right || 
                     gs->moving_up || gs->moving_down;
+
+    // THESE LINES for footsteps:
+    if (gs->is_moving) {
+        gs->footstep_timer += delta_time;
+        if (gs->footstep_timer >= FOOTSTEP_INTERVAL) {
+            gs->footstep_timer = 0.0f;
+            // We'll add the actual sound play here next
+        }
+    } else {
+        gs->footstep_timer = 0.0f;
+    }
     
     // Update player walk animation
     if (gs->is_moving) {
@@ -326,26 +508,40 @@ void game_screen_update(GameScreen *gs, float delta_time) {
     gs->player_x = clamp(gs->player_x, 0, gs->map_width);
     gs->player_y = clamp(gs->player_y, 0, gs->map_height);
 
-    // Update NPC idle animation (independent of player)
-    gs->npc_frame_timer += delta_time;
-    if (gs->npc_frame_timer >= gs->npc_frame_duration) {
-        gs->npc_frame_timer = 0.0f;
-        gs->npc_frame = (gs->npc_frame + 1) % NPC_FRAME_COUNT_ANIM;
+    // Update all NPCs
+    for (int i = 0; i < gs->npc_count; i++) {
+        update_npc_movement(&gs->npcs[i], delta_time);
     }
 
-    // Make NPC face the player (for world rendering)
-    if (gs->player_x > gs->npc_x) {
-        gs->npc_facing_right = true;
-    } else {
-        gs->npc_facing_right = false;
+    float nearest_dist_sq = 50.0f * 50.0f;  // interaction radius squared
+    gs->player_near_npc = false;
+    gs->active_npc_index = -1;
+
+    for (int i = 0; i < gs->npc_count; i++) {
+        if (!gs->npcs[i].is_active) continue;
+        float dx = gs->player_x - gs->npcs[i].x;
+        float dy = gs->player_y - gs->npcs[i].y;
+        float dist_sq = dx*dx + dy*dy;
+        if (dist_sq < nearest_dist_sq) {
+            // Only update if this is the closest one so far
+            if (dist_sq < nearest_dist_sq) {
+                nearest_dist_sq = dist_sq;
+                gs->player_near_npc = true;
+                gs->active_npc_index = i;
+            }
+        }
+    }
+
+    // Update trail system (optional: fade out after some time)
+    if (gs->trail_active) {
+        float elapsed = gs->total_play_time - gs->trail_activation_time;
+        if (elapsed > 30.0f) {
+            gs->trail_active = false;
+            gs->trail_count = 0;
+        }
+        // (Could also decrement lifetimes here)
     }
     
-    // Check if player is close enough to talk to the NPC
-    float dx = gs->player_x - gs->npc_x;
-    float dy = gs->player_y - gs->npc_y;
-    float distance_sq = dx*dx + dy*dy;
-    gs->player_near_npc = (distance_sq < 40 * 20);   // Magic threshold – feels right
-
     // Update camera after movement
     update_camera(gs);
 }
@@ -404,51 +600,63 @@ void dialogue_start_script(GameScreen *gs, SDL_Renderer *renderer, const char *f
 void dialogue_advance_script(GameScreen *gs, SDL_Renderer *renderer) {
     if (!gs || !gs->in_dialogue || !gs->current_script) return;
     
-    // If waiting for a choice, do nothing – choices are handled separately
-    if (gs->waiting_for_player_choice) {
-        return;
-    }
+    // If waiting for a choice, do nothing
+    if (gs->waiting_for_player_choice) return;
     
-    // If text is still being typed, just skip to the end on this press
-    if (!gs->dialogue_text_complete) {
-        gs->dialogue_skip_requested = true;
-        printf("Skipping to end of line\n");
-        return;
-    }
-    
-    // Text is complete; get the current line and decide where to go
+    // Get current line
     DialogueEntry *current = dialogue_get_line(gs->current_script, gs->current_line_index);
     if (!current) {
         dialogue_end(gs);
         return;
     }
     
-    // If this line triggers a battle, exit dialogue and set the flag
+    // Auto-skip lines that have no text and are not choices or battle triggers
+    if (strlen(current->text) == 0 && !current->is_player_choice && !current->triggers_battle) {
+        // This is a command line (e.g., [PLAY_SFX laugh])
+        int next = current->next_line;
+        if (next >= 0 && next < gs->current_script->line_count) {
+            gs->current_line_index = next;
+            gs->dialogue_char_index = 0;
+            gs->dialogue_timer = 0.0f;
+            gs->dialogue_text_complete = false;
+            gs->dialogue_skip_requested = false;
+            dialogue_advance_script(gs, renderer); // recursively advance
+        } else {
+            dialogue_end(gs);
+        }
+        return;
+    }
+    
+    // If text is still being typed, skip to the end
+    if (!gs->dialogue_text_complete) {
+        gs->dialogue_skip_requested = true;
+        printf("Skipping to end of line\n");
+        return;
+    }
+    
+    // If this line triggers a battle, exit dialogue and set flag
     if (current->triggers_battle) {
         gs->battle_triggered = true;
         dialogue_end(gs);
         return;
     }
     
-    // Move to the next line (either specified by next_line or automatically +1)
+    // Move to the next line
     int next = current->next_line;
-    
     if (next >= 0 && next < gs->current_script->line_count) {
         gs->current_line_index = next;
         gs->dialogue_char_index = 0;
         gs->dialogue_timer = 0.0f;
         gs->dialogue_text_complete = false;
         gs->dialogue_skip_requested = false;
-        gs->player_speaking = false;   // Will be set based on the speaker field later
+        gs->player_speaking = false;
         
-        // Check if the new line is a choice; if so, wait for player selection
         DialogueEntry *next_entry = dialogue_get_line(gs->current_script, next);
         if (next_entry && next_entry->is_player_choice) {
             gs->waiting_for_player_choice = true;
             printf("Waiting for player choice at line %d\n", next);
         }
         
-        // Clear cached name texture so it will be re‑rendered for the new speaker
         if (gs->dialogue_name_texture) {
             SDL_DestroyTexture(gs->dialogue_name_texture);
             gs->dialogue_name_texture = NULL;
@@ -456,7 +664,6 @@ void dialogue_advance_script(GameScreen *gs, SDL_Renderer *renderer) {
         
         printf("Advanced to line %d\n", next);
     } else {
-        // No valid next line – end dialogue
         printf("End of dialogue\n");
         dialogue_end(gs);
     }
@@ -473,9 +680,12 @@ void dialogue_select_choice(GameScreen *gs, int choice) {
     
     printf("Player selected choice %d -> jumping to line %d\n", choice, next_line);
     
+    // Start battle music immediately when player chooses fight (choice 0)
+    if (choice == 0) {
+        gs->play_battle_music_requested = true;
+    }
+    
     gs->waiting_for_player_choice = false;
-    // Important: Do NOT reset player_speaking here. The next line's speaker field
-    // determines who is talking.
     
     if (next_line >= 0 && next_line < gs->current_script->line_count) {
         gs->current_line_index = next_line;
@@ -484,20 +694,17 @@ void dialogue_select_choice(GameScreen *gs, int choice) {
         gs->dialogue_text_complete = false;
         gs->dialogue_skip_requested = false;
         
-        // Check if the new line triggers a battle
-        DialogueEntry *next_entry = dialogue_get_line(gs->current_script, next_line);
-        if (next_entry && next_entry->triggers_battle) {
+        DialogueEntry *next_entry2 = dialogue_get_line(gs->current_script, next_line);
+        if (next_entry2 && next_entry2->triggers_battle) {
             gs->battle_triggered = true;
             dialogue_end(gs);
             return;
         }
         
-        // If the next line is another choice, stay in waiting mode
-        if (next_entry && next_entry->is_player_choice) {
+        if (next_entry2 && next_entry2->is_player_choice) {
             gs->waiting_for_player_choice = true;
         }
         
-        // Clear cached name texture
         if (gs->dialogue_name_texture) {
             SDL_DestroyTexture(gs->dialogue_name_texture);
             gs->dialogue_name_texture = NULL;
@@ -507,10 +714,16 @@ void dialogue_select_choice(GameScreen *gs, int choice) {
     }
 }
 
-// End the current dialogue, clean up
+// End the current dialogue, clean up, and possibly trigger trail
 void dialogue_end(GameScreen *gs) {
     if (!gs) return;
     gs->in_dialogue = false;
+    gs->play_battle_music_requested = false;
+    
+    // If this NPC was the one that triggers a trail, activate it now
+    if (gs->active_npc_index >= 0 && gs->npcs[gs->active_npc_index].trigger_trail) {
+        generate_trail(gs);
+    }
     
     if (gs->dialogue_name_texture) {
         SDL_DestroyTexture(gs->dialogue_name_texture);
@@ -524,25 +737,63 @@ void dialogue_end(GameScreen *gs) {
 void dialogue_update(GameScreen *gs, float delta_time, SDL_Renderer *renderer) {
     if (!gs || !gs->in_dialogue || !gs->current_script) return;
     
+    // Get current dialogue entry
+    DialogueEntry *entry = dialogue_get_line(gs->current_script, gs->current_line_index);
+    if (!entry) return;
+    
+    // Auto-advance if this is a command line (no text, not choice, not battle)
+    if (strlen(entry->text) == 0 && !entry->is_player_choice && !entry->triggers_battle) {
+        // Process any effects (like play_sfx) before advancing
+        if (entry->play_sfx && strcmp(entry->sfx_name, "laugh") == 0) {
+            printf("Laugh requested for line index %d\n", gs->current_line_index);
+            gs->play_laugh_requested = true;
+        }
+        if (entry->play_battle_music && !gs->play_battle_music_requested) {
+            gs->play_battle_music_requested = true;
+        }
+        // Advance to next line
+        int next = entry->next_line;
+        if (next >= 0 && next < gs->current_script->line_count) {
+            gs->current_line_index = next;
+            gs->dialogue_char_index = 0;
+            gs->dialogue_timer = 0.0f;
+            gs->dialogue_text_complete = false;
+            gs->dialogue_skip_requested = false;
+            // Recurse to process the new line (which may also be a command)
+            dialogue_update(gs, delta_time, renderer);
+        } else {
+            dialogue_end(gs);
+        }
+        return;
+    }
+    
+    // Normal dialogue flow continues...
     gs->dialogue_timer += delta_time;
     
-    // Animate NPC portrait during dialogue (independent of world animation)
+    // Animate NPC portrait during dialogue
     gs->dialogue_npc_timer += delta_time;
     if (gs->dialogue_npc_timer >= gs->dialogue_npc_frame_duration) {
         gs->dialogue_npc_timer = 0.0f;
         gs->dialogue_npc_frame = (gs->dialogue_npc_frame + 1) % NPC_FRAME_COUNT_ANIM;
     }
     
-    // Typewriter effect: add a new character when enough time has passed
+    // Check for battle music request
+    if (entry->play_battle_music && !gs->play_battle_music_requested) {
+        gs->play_battle_music_requested = true;
+    }
+    
+    // Check for laugh request
+    if (entry->play_sfx && strcmp(entry->sfx_name, "laugh") == 0) {
+        printf("Laugh requested for line index %d\n", gs->current_line_index);
+        gs->play_laugh_requested = true;
+    }
+    
+    // Typewriter effect
     if (!gs->dialogue_text_complete) {
-        DialogueEntry *entry = dialogue_get_line(gs->current_script, gs->current_line_index);
-        if (!entry) return;
-        
         const char *current_text = entry->text;
         int text_len = strlen(current_text);
         
         if (gs->dialogue_skip_requested) {
-            // Skip to end immediately
             gs->dialogue_char_index = text_len;
             gs->dialogue_text_complete = true;
             gs->dialogue_skip_requested = false;
@@ -949,7 +1200,7 @@ void dialogue_render(SDL_Renderer *renderer, GameScreen *gs) {
 }
 
 // ----------------------------------------------------------------------------
-// Main rendering – draws the world, player, NPC, and optionally dialogue
+// Main rendering – draws the world, player, NPCs, trail, and optionally dialogue
 // ----------------------------------------------------------------------------
 void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
     if (!gs || !renderer) return;
@@ -989,35 +1240,139 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
     float screen_x = (gs->player_x * cam->zoom) - cam->x;
     float screen_y = (gs->player_y * cam->zoom) - cam->y;
 
-    float npc_screen_x = (gs->npc_x * cam->zoom) - cam->x;
-    float npc_screen_y = (gs->npc_y * cam->zoom) - cam->y;
-
     float sprite_size = 16 * cam->zoom;
     float npc_sprite_size = 35 * cam->zoom;
 
-    // Draw NPC (only when not in dialogue, to avoid overlapping with portrait)
-    if (gs->npc_idle_texture && !gs->in_dialogue) {
-        // Choose row based on facing direction (row 3 for right, row 1 for left)
-        int row = gs->npc_facing_right ? 3 : 1;
+    // ------------------------------------------------------------------------
+    // Draw all NPCs
+    // ------------------------------------------------------------------------
+    // Make idle NPCs face the player when nearby
+    for (int i = 0; i < gs->npc_count; i++) {
+        NPC *npc = &gs->npcs[i];
+        if (!npc->is_active) continue;
         
-        SDL_FRect src_sprite = {
-            .x = (float)(gs->npc_frame * NPC_FRAME_WIDTH),
-            .y = (float)(row * (NPC_FRAME_HEIGHT + 4)),   // +4 for spacing between rows
-            .w = NPC_FRAME_WIDTH,
-            .h = NPC_FRAME_HEIGHT
-        };
-
-        SDL_FRect dst_sprite = {
-            .x = npc_screen_x - npc_sprite_size / 2,
-            .y = npc_screen_y - npc_sprite_size / 2,
-            .w = npc_sprite_size,
-            .h = npc_sprite_size
-        };
-
-        SDL_RenderTexture(renderer, gs->npc_idle_texture, &src_sprite, &dst_sprite);
+        // Calculate distance to this NPC
+        float dx = gs->player_x - npc->x;
+        float dy = gs->player_y - npc->y;
+        float dist_sq = dx*dx + dy*dy;
+        
+        // If idle or not moving, face towards player when close
+        if (npc->move_pattern == 0 || !npc->is_moving) {
+            // Face player if within medium distance (120*120 = 14400)
+            if (dist_sq < 14400.0f) {
+                if (dx > 0) npc->facing_right = true;
+                else if (dx < 0) npc->facing_right = false;
+            }
+        }
+        
+        float npc_screen_x = (npc->x * cam->zoom) - cam->x;
+        float npc_screen_y = (npc->y * cam->zoom) - cam->y;
+        
+        // Render NPC sprite
+        if (gs->npc_idle_texture) {
+            int row = npc->facing_right ? 3 : 1;
+            SDL_FRect src_sprite = {
+                .x = (float)(npc->current_frame * NPC_FRAME_WIDTH),
+                .y = (float)(row * (NPC_FRAME_HEIGHT + 4)),
+                .w = NPC_FRAME_WIDTH,
+                .h = NPC_FRAME_HEIGHT
+            };
+            SDL_FRect dst_sprite = {
+                .x = npc_screen_x - npc_sprite_size / 2,
+                .y = npc_screen_y - npc_sprite_size / 2,
+                .w = npc_sprite_size,
+                .h = npc_sprite_size
+            };
+            SDL_RenderTexture(renderer, gs->npc_idle_texture, &src_sprite, &dst_sprite);
+        }
+        
+        // --------------------------------------------------------------------
+        // THREE-ZONE PROMPT SYSTEM
+        // --------------------------------------------------------------------
+        if (!gs->in_dialogue) {
+            float close_dist = 50.0f;           // Can interact
+            float medium_dist = 120.0f;         // Can see/hear but not talk
+            // Beyond medium = far (show "..." or nothing)
+            
+            float close_dist_sq = close_dist * close_dist;       // 2500
+            float medium_dist_sq = medium_dist * medium_dist;     // 14400
+            
+            if (dist_sq < close_dist_sq) {
+                // ZONE 1: CLOSE - Show "Press E to talk" (yellow)
+                SDL_Surface *surf = TTF_RenderText_Blended(
+                    gs->font,
+                    "Press E to talk",
+                    0,
+                    (SDL_Color){255, 255, 0, 255}  // Yellow
+                );
+                if (surf) {
+                    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
+                    float w, h;
+                    SDL_GetTextureSize(tex, &w, &h);
+                    SDL_FRect rect = {
+                        npc_screen_x - w / 2,
+                        npc_screen_y - npc_sprite_size / 2 - 25,  // Above NPC
+                        w, h
+                    };
+                    SDL_RenderTexture(renderer, tex, NULL, &rect);
+                    SDL_DestroyTexture(tex);
+                    SDL_DestroySurface(surf);
+                }
+            } 
+            else if (dist_sq < medium_dist_sq) {
+                // ZONE 2: MEDIUM - Show mysterious question (RED, only for Naberius/NPC 0)
+                if (i == 0) {  // Naberius only
+                    SDL_Surface *surf = TTF_RenderText_Blended(
+                        gs->font_bold,  // Bold font for emphasis
+                        "Who are you? Where are you going?",
+                        0,
+                        (SDL_Color){255, 50, 50, 255}  // Red color
+                    );
+                    if (surf) {
+                        SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
+                        float w, h;
+                        SDL_GetTextureSize(tex, &w, &h);
+                        SDL_FRect rect = {
+                            npc_screen_x - w / 2,
+                            npc_screen_y - npc_sprite_size / 2 - 25,  // Above NPC
+                            w, h
+                        };
+                        SDL_RenderTexture(renderer, tex, NULL, &rect);
+                        SDL_DestroyTexture(tex);
+                        SDL_DestroySurface(surf);
+                    }
+                }
+                // For other NPCs in medium zone, show nothing or faint "..."
+            }
+            else {
+                // ZONE 3: FAR - Show faint "..." 
+                TTF_Font *font_to_use = gs->font_bold ? gs->font_bold : gs->font;
+                SDL_Surface *surf = TTF_RenderText_Blended(
+                    font_to_use,
+                    "...",
+                    0,
+                    (SDL_Color){200, 200, 200, 125}  // Faint grey
+                );
+                if (surf) {
+                    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
+                    float w, h;
+                    SDL_GetTextureSize(tex, &w, &h);
+                    SDL_FRect rect = {
+                        npc_screen_x - w / 2,
+                        npc_screen_y - npc_sprite_size / 2 + 15,  // Below NPC
+                        w, h
+                    };
+                    SDL_RenderTexture(renderer, tex, NULL, &rect);
+                    SDL_DestroyTexture(tex);
+                    SDL_DestroySurface(surf);
+                }
+            }
+        }
     }
 
+    // ------------------------------------------------------------------------
     // Draw player sprite
+    // ------------------------------------------------------------------------
     SDL_Texture *current_texture = gs->is_moving ? gs->run_texture : gs->idle_texture;
     
     if (current_texture && !gs->in_dialogue) {
@@ -1040,62 +1395,43 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
         SDL_RenderTextureRotated(renderer, current_texture, &src_sprite, &dst_sprite, 0.0, NULL, flip);
     }
 
-    // Interaction prompt above NPC (only when not in dialogue)
-    if (!gs->in_dialogue) {
-        if (gs->player_near_npc) {
-            SDL_Surface *surf = TTF_RenderText_Blended(
-                gs->font,
-                "Press E to talk",
-                0,
-                (SDL_Color){255,255,0,255}
-            );
-
-            SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
-            SDL_DestroySurface(surf);
-
-            float w, h;
-            SDL_GetTextureSize(tex, &w, &h);
-
-            SDL_FRect rect = {
-                .x = npc_screen_x - w / 2,
-                .y = npc_screen_y - npc_sprite_size / 2 - 5,
-                .w = w,
-                .h = h
-            };
-
-            SDL_RenderTexture(renderer, tex, NULL, &rect);
-            SDL_DestroyTexture(tex);
-        }
-        else {
-            // Default floating text when not near NPC (for atmosphere)
-            TTF_Font *font_to_use = gs->font_bold ? gs->font_bold : gs->font;
+    // ------------------------------------------------------------------------
+    // Draw arrow trail (if active)
+    // ------------------------------------------------------------------------
+    if (gs->trail_active) {
+        for (int i = 0; i < gs->trail_count - 1; i++) {
+            TrailPoint *p1 = &gs->trail_points[i];
+            TrailPoint *p2 = &gs->trail_points[i+1];
+            if (!p1->active || !p2->active) continue;
             
-            SDL_Surface *surf = TTF_RenderText_Blended(
-                font_to_use,
-                "Who are you? Where are you going?",
-                0,
-                (SDL_Color){255,0,0,125}
-            );
-
-            SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
-            SDL_DestroySurface(surf);
-
-            float w, h;
-            SDL_GetTextureSize(tex, &w, &h);
-
-            SDL_FRect rect = {
-                .x = npc_screen_x - w / 2,
-                .y = npc_screen_y - npc_sprite_size / 2 + 5,
-                .w = w,
-                .h = h
-            };
-
-            SDL_RenderTexture(renderer, tex, NULL, &rect);
-            SDL_DestroyTexture(tex);
+            float x1 = p1->x * cam->zoom - cam->x;
+            float y1 = p1->y * cam->zoom - cam->y;
+            float x2 = p2->x * cam->zoom - cam->x;
+            float y2 = p2->y * cam->zoom - cam->y;
+            
+            // Draw line segment
+            SDL_SetRenderDrawColor(renderer, 255, 200, 0, 200);
+            SDL_RenderLine(renderer, x1, y1, x2, y2);
+            
+            // Draw arrowhead at each point (except last)
+            if (i < gs->trail_count - 1) {
+                float angle = atan2f(y2 - y1, x2 - x1);
+                float arrow_size = 15.0f;
+                float a1 = angle + 0.5f;
+                float a2 = angle - 0.5f;
+                SDL_RenderLine(renderer, x2, y2,
+                    x2 - cosf(a1) * arrow_size,
+                    y2 - sinf(a1) * arrow_size);
+                SDL_RenderLine(renderer, x2, y2,
+                    x2 - cosf(a2) * arrow_size,
+                    y2 - sinf(a2) * arrow_size);
+            }
         }
     }
 
+    // ------------------------------------------------------------------------
     // Draw title text (only when not in dialogue)
+    // ------------------------------------------------------------------------
     if (!gs->in_dialogue) {
         float w, h;
         SDL_GetTextureSize(gs->title_text, &w, &h);
@@ -1153,9 +1489,28 @@ void game_screen_handle_input(GameScreen *gs, SDL_KeyboardEvent *key) {
             break;
 
         case SDL_SCANCODE_E:
-            if (is_pressed && gs->player_near_npc && !gs->in_dialogue) {
-                // Start a specific dialogue script
-                dialogue_start_script(gs, NULL, "game_assets/dialogues/naberius_encounter.txt");
+            if (is_pressed && !gs->in_dialogue) {
+                // Find closest NPC within interaction range
+                float closest_dist_sq = 999999.0f;
+                int closest_npc = -1;
+                
+                for (int i = 0; i < gs->npc_count; i++) {
+                    if (!gs->npcs[i].is_active) continue;
+                    float dx = gs->player_x - gs->npcs[i].x;
+                    float dy = gs->player_y - gs->npcs[i].y;
+                    float dist_sq = dx*dx + dy*dy;
+                    
+                    // Must be within close range (50 pixels) to interact
+                    if (dist_sq < (50.0f * 50.0f) && dist_sq < closest_dist_sq) {
+                        closest_dist_sq = dist_sq;
+                        closest_npc = i;
+                    }
+                }
+                
+                if (closest_npc >= 0) {
+                    gs->active_npc_index = closest_npc;
+                    dialogue_start_script(gs, NULL, gs->npcs[closest_npc].dialogue_file);
+                }
             }
             break;
             

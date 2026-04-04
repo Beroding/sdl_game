@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <time.h>
+#include <string.h>
 
 #include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
@@ -21,6 +22,9 @@
 #include "../include/pause_menu.h"
 #include "../include/save_system.h"
 #include "../include/save_menu.h"
+#include "../include/music_system.h"
+#include "../include/sfx_system.h"
+#include "../include/loading_screen.h"
 
 #define SDL_FLAGS SDL_INIT_VIDEO
 #define WINDOW_TITLE "AfterLife"
@@ -30,6 +34,7 @@
 // Game states - only one screen active at a time (like TV channels)
 typedef enum {
     STATE_MENU,
+    STATE_LOADING,
     STATE_PLAYING,
     STATE_DIALOGUE,
     STATE_OPENING_ANIMATION,
@@ -45,6 +50,7 @@ struct Game
     SDL_Renderer *renderer;
     Menu *menu;
     GameScreen *game_screen;
+    LoadingScreen *loading_screen;
     SDL_Event event;
     bool isRunning;
     GameState state;
@@ -56,6 +62,9 @@ struct Game
     float play_time;        // Accumulated across sessions for save files
     time_t session_start;   // Tracks current session separately
     int current_save_slot;  // -1 = no active save (new game)
+
+    MusicSystem *music;
+    SFXSystem *sfx;
 };
 
 // Global pointer allows callbacks (like save menu) to access game state
@@ -139,12 +148,27 @@ bool game_init_sdl(struct Game *g)
     }
     printf("Save menu created\n");
 
+    g->loading_screen = loading_screen_create(g->renderer, window_w, window_h);
+    if (!g->loading_screen) {
+        printf("loading_screen_create failed\n");
+        return false;
+    }
+    printf("Loading screen created\n");
+
+    g->music = music_system_create();
+    if (!g->music) {
+        printf("Warning: Music system failed to initialize\n");
+        // Continue without music - don't fail the whole game
+    }
+
     // Wire up save menu callbacks so it can trigger game actions
     save_menu_set_callbacks(g->save_menu, 
                            on_save_completed,
                            on_load_selected,
                            on_delete_completed,
                            on_save_cancelled);
+    
+    g->sfx = sfx_create(g->music ? g->music->mixer : NULL);
 
     g->game_screen = NULL;
     g->battle = NULL;
@@ -199,11 +223,14 @@ void game_free(struct Game **game)
 
         menu_destroy(g->menu);
         game_screen_destroy(g->game_screen);
+        loading_screen_destroy(g->loading_screen);
         opening_destroy(g->opening);
         battle_destroy(g->battle);
         pause_menu_destroy(g->pause_menu);
         save_menu_destroy(g->save_menu);
         save_system_destroy(g->save_system);
+        music_system_destroy(g->music);
+        sfx_destroy(g->sfx);
 
         if(g->renderer) 
         {
@@ -238,6 +265,11 @@ void start_new_game(struct Game *g)
 {
     printf("Starting new game...\n");
     
+    // Stop menu music when game screen appears
+    if (g->music) {
+        music_stop(g->music);
+    }
+
     game_screen_destroy(g->game_screen);
     g->game_screen = NULL;
     
@@ -270,6 +302,11 @@ void start_new_game(struct Game *g)
 void continue_game(struct Game *g, SaveSlotData *data)
 {
     printf("Continuing game from save...\n");
+    
+    // Stop menu music when game screen appears
+    if (g->music) {
+        music_stop(g->music);
+    }
     
     game_screen_destroy(g->game_screen);
     g->game_screen = NULL;
@@ -381,6 +418,13 @@ void return_to_menu(struct Game *g)
 {
     printf("Returning to menu...\n");
     g->state = STATE_MENU;
+    
+    // Force music to restart by stopping first, then playing
+    if (g->music) {
+        music_stop(g->music);           // Stop current music
+        music_play_menu(g->music);      // Play menu music fresh
+    }
+    
     if (g->pause_menu) {
         pause_menu_close(g->pause_menu);
     }
@@ -471,7 +515,7 @@ void game_events(struct Game *g)
                     if (index >= 0) {
                         printf("menu click index=%d\n", index);
                         switch (index) {
-                            case 0:
+                            case 0: // Continue
                                 if (g->save_system) {
                                     bool has_saves = false;
                                     for (int i = 0; i < MAX_SAVE_SLOTS; i++) {
@@ -484,12 +528,17 @@ void game_events(struct Game *g)
                                         g->state = STATE_SAVE_MENU;
                                         save_menu_open(g->save_menu, SAVE_MENU_MODE_LOAD);
                                     } else {
-                                        printf("No saves found, starting new game\n");
-                                        start_new_game(g);
+                                        // Start loading screen instead of direct game
+                                        loading_screen_start(g->loading_screen, NULL, NULL);
+                                        g->state = STATE_LOADING;
                                     }
                                 }
                                 break;
-                            case 1: start_new_game(g); break;
+                            case 1: // New Game
+                                loading_screen_start(g->loading_screen, NULL, NULL);
+                                g->state = STATE_LOADING;
+                                break;
+                            // case 1: start_new_game(g); break;
                             case 2: g->state = STATE_CREDITS; break;
                             case 3: g->isRunning = false; break;
                         }
@@ -576,90 +625,172 @@ void game_events(struct Game *g)
 // Updates at ~60 FPS. Each state handles its own logic.
 
 void game_update(struct Game *g) {
+    // Update UI menus (save menu and pause menu) with fixed delta time
     if (g->save_menu) {
         save_menu_update(g->save_menu, 0.016f);
     }
-    
     if (g->pause_menu) {
         pause_menu_update(g->pause_menu, 0.016f);
     }
-    
+
+    // ============================================================================
+    // MUSIC SYSTEM – Play appropriate music based on game state
+    // Only change when state actually changes to avoid spam
+    // ============================================================================
+    static MusicType last_music_state = MUSIC_NONE;
+    static GameState last_game_state = STATE_MENU;
+    MusicType desired_music = MUSIC_NONE;
+
+    // Force music restart if returning to menu (state changed to MENU)
+    if (g->state != last_game_state) {
+        if (g->state == STATE_MENU) {
+            // Reset last_music_state to force menu music to restart
+            last_music_state = MUSIC_NONE;
+        }
+    }
+    last_game_state = g->state;
+
+    if (g->music) {
+        switch (g->state) {
+            case STATE_MENU:
+            case STATE_SAVE_MENU:
+            case STATE_LOADING:
+                desired_music = MUSIC_MENU;
+                break;
+                
+            case STATE_PLAYING:
+                // Only play game music if not paused and no other menu is open
+                if ((!g->pause_menu || !pause_menu_is_open(g->pause_menu)) &&
+                    (!g->save_menu || !save_menu_is_open(g->save_menu))) {
+                    desired_music = MUSIC_GAME;
+                } else {
+                    desired_music = MUSIC_NONE;
+                }
+                break;
+                
+            case STATE_BATTLE:
+                desired_music = MUSIC_BATTLE;
+                break;
+                
+            case STATE_OPENING_ANIMATION:
+                desired_music = MUSIC_BATTLE;
+                break;
+                
+            case STATE_CREDITS:
+            default:
+                desired_music = MUSIC_NONE;
+                break;
+        }
+
+        if (desired_music != last_music_state) {
+            switch (desired_music) {
+                case MUSIC_MENU:    music_play_menu(g->music);    break;
+                case MUSIC_GAME:    music_play_game(g->music);    break;
+                case MUSIC_BATTLE:  music_play_battle(g->music);  break;
+                default:            music_stop(g->music);         break;
+            }
+            last_music_state = desired_music;
+        }
+    }
+
+    // ============================================================================
+    // LOADING SCREEN – Update loading progress (moved out of music system)
+    // ============================================================================
+    if (g->state == STATE_LOADING && g->loading_screen) {
+        static float load_progress = 0.0f;
+        static bool loading_started = false;
+        
+        if (!loading_started) {
+            load_progress = 0.0f;
+            loading_started = true;
+            loading_screen_start(g->loading_screen, NULL, NULL);
+        }
+        
+        // Update progress - ensure it reaches exactly 1.0
+        load_progress += 0.016f / 1.5f;
+        if (load_progress > 1.0f) load_progress = 1.0f;
+        
+        loading_screen_set_progress(g->loading_screen, load_progress);
+        loading_screen_update(g->loading_screen, 0.016f, g->renderer);
+        
+        // When progress reaches 100%, stop music and start game
+        if (load_progress >= 1.0f) {
+            loading_started = false;
+            load_progress = 0.0f;
+            
+            start_new_game(g);
+        }
+    }
+
+    // ============================================================================
+    // FOOTSTEP SFX – Loop while moving, restart if it stops unexpectedly
+    // ============================================================================
+    static bool was_moving = false;
+
+    if (g->game_screen && g->state == STATE_PLAYING &&
+        (!g->pause_menu || !pause_menu_is_open(g->pause_menu))) {
+
+        bool is_moving = g->game_screen->is_moving;
+
+        if (is_moving && !was_moving) {
+            // Player started moving – start looping footstep
+            sfx_play_footstep_loop(g->sfx);
+        } else if (!is_moving && was_moving) {
+            // Player stopped moving – cut footstep immediately
+            sfx_stop_footstep(g->sfx);
+        } else if (is_moving && was_moving) {
+            // Already moving – check if footstep stopped (e.g., loop ended)
+            if (!sfx_is_footstep_playing(g->sfx)) {
+                // Restart the loop
+                sfx_play_footstep_loop(g->sfx);
+            }
+        }
+        was_moving = is_moving;
+    } else {
+        // Not in a state where footsteps should play – ensure they are stopped
+        if (was_moving) {
+            sfx_stop_footstep(g->sfx);
+            was_moving = false;
+        }
+    }
+
+    if (g->game_screen && g->game_screen->play_laugh_requested) {
+        printf("Processing laugh request, calling sfx_play_laugh\n");
+        sfx_play_laugh(g->sfx);
+        g->game_screen->play_laugh_requested = false;
+    }
+
+    // ============================================================================
+    // STATE MACHINE – Update logic based on current game state
+    // ============================================================================
     switch (g->state) {
         case STATE_MENU:
-            break;
-            
         case STATE_SAVE_MENU:
-            if (!save_menu_is_open(g->save_menu)) {
-                if (!g->game_screen) {
-                    g->state = STATE_MENU;
-                } else {
-                    g->state = STATE_PLAYING;
-                }
-            }
+        case STATE_LOADING:  // Add this - play menu music during loading
+            desired_music = MUSIC_MENU;
             break;
             
         case STATE_PLAYING:
-            if ((g->pause_menu && pause_menu_is_open(g->pause_menu)) ||
-                (g->save_menu && save_menu_is_open(g->save_menu))) {
-                break;
-            }
-            
-            if (g->game_screen) {
-                game_screen_update(g->game_screen, 0.016f);
-                
-                // Dialogue ended with battle trigger - start encounter
-                if (g->game_screen->battle_triggered && !g->game_screen->in_dialogue) {
-                    g->game_screen->battle_triggered = false;
-                    
-                    int w, h;
-                    SDL_GetWindowSize(g->window, &w, &h);
-                    
-                    g->opening = opening_create(g->renderer, w, h);
-                    if (g->opening) {
-                        g->state = STATE_OPENING_ANIMATION;
-                    } else {
-                        g->battle = battle_create(g->renderer, w, h);
-                        if (g->battle) {
-                            g->state = STATE_BATTLE;
-                        }
-                    }
-                }
-            }
-            break;
-            
-        case STATE_OPENING_ANIMATION:
-            if (g->opening) {
-                opening_update(g->opening, 0.016f);
-                
-                if (opening_is_complete(g->opening)) {
-                    opening_destroy(g->opening);
-                    g->opening = NULL;
-                    
-                    int w, h;
-                    SDL_GetWindowSize(g->window, &w, &h);
-                    
-                    g->battle = battle_create(g->renderer, w, h);
-                    if (g->battle) {
-                        g->state = STATE_BATTLE;
-                    } else {
-                        g->state = STATE_PLAYING;
-                    }
-                }
+            // Only play game music if not paused and no other menu is open
+            if ((!g->pause_menu || !pause_menu_is_open(g->pause_menu)) &&
+                (!g->save_menu || !save_menu_is_open(g->save_menu))) {
+                desired_music = MUSIC_GAME;
+            } else {
+                desired_music = MUSIC_NONE;
             }
             break;
             
         case STATE_BATTLE:
-            if (g->battle) {
-                battle_update(g->battle, 0.016f);
-                if (!battle_is_active(g->battle)) {
-                    battle_destroy(g->battle);
-                    g->battle = NULL;
-                    g->state = STATE_PLAYING;
-                }
-            }
+            desired_music = MUSIC_BATTLE;
+            break;
+            
+        case STATE_OPENING_ANIMATION:
+            desired_music = MUSIC_BATTLE;
             break;
             
         case STATE_CREDITS:
+        default:
+            desired_music = MUSIC_NONE;
             break;
     }
 }
@@ -684,6 +815,10 @@ void game_draw(struct Game *g) {
                 if (g->menu) menu_render(g->renderer, g->menu);
             }
             if (g->save_menu) save_menu_render(g->renderer, g->save_menu);
+            break;
+        
+        case STATE_LOADING:
+            if (g->loading_screen) loading_screen_render(g->renderer, g->loading_screen);
             break;
             
         case STATE_PLAYING:

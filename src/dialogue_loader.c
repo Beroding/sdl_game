@@ -45,7 +45,35 @@ static void parse_line(char *line, DialogueEntry *entry) {
         strcpy(entry->text, "BATTLE_START");
         return;
     }
-    
+
+    if (strncmp(line, "[PLAY_MUSIC battle]", 19) == 0) {
+        entry->play_battle_music = true;
+        strcpy(entry->speaker, "SYSTEM");
+        strcpy(entry->text, "");
+        return;
+    }
+
+    // ============================================================================
+    // SPECIAL COMMAND: [PLAY_SFX name] - Plays a sound effect (e.g., laugh)
+    // ============================================================================
+    if (strncmp(line, "[PLAY_SFX", 9) == 0) {
+        char *start = line + 9;
+        while (*start == ' ') start++;  // skip spaces
+        char *end = start;
+        while (*end && *end != ']') end++;
+        if (*end == ']') {
+            int len = end - start;
+            if (len > 0 && len < 32) {
+                strncpy(entry->sfx_name, start, len);
+                entry->sfx_name[len] = '\0';
+                entry->play_sfx = true;
+                strcpy(entry->speaker, "SYSTEM");
+                strcpy(entry->text, "");
+                return;
+            }
+        }
+    }
+        
     // ============================================================================
     // SPECIAL COMMAND: [CHOICE] - Player makes a decision
     // Format: [CHOICE] Speaker | Question | Option A | Option B | Next A | Next B
@@ -153,9 +181,11 @@ DialogueScript* dialogue_load(const char *filename) {
         // Parse this line into the next slot
         parse_line(line, &script->lines[script->line_count]);
         
-        // Only count non-empty lines
+        // Only count non-empty lines OR special commands
         if (strlen(script->lines[script->line_count].text) > 0 ||
-            script->lines[script->line_count].triggers_battle) {
+            script->lines[script->line_count].triggers_battle ||
+            script->lines[script->line_count].play_battle_music ||
+            script->lines[script->line_count].play_sfx) {
             
             // Auto-set next line if not specified
             if (script->lines[script->line_count].next_line == -1 && 

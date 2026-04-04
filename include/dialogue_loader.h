@@ -48,10 +48,13 @@ typedef struct {
     int next_line_a;        // Line index for choice A
     int next_line_b;        // Line index for choice B
 
+    bool play_sfx;          // if true, play a sound effect (e.g., laugh)
+    char sfx_name[32];      // name of the sound effect (e.g., "laugh")
+
     // If true, this entry triggers a battle scene instead of continuing dialogue.
     // The game engine should handle the battle and later resume dialogue.
     bool triggers_battle;
-
+    bool play_battle_music;   // if true, play battle music when this line is shown
 } DialogueEntry;
 
 // ============================================================================

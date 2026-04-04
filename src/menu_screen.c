@@ -13,6 +13,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include "../include/menu_screen.h"
+#include "../include/music_system.h"
 
 // Create the main menu
 Menu *menu_create(SDL_Renderer *renderer, int window_width, int window_height) {
