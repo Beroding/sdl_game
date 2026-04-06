@@ -9,7 +9,7 @@
 #include "../include/credit_screen.h"
 
 // Timing constants (in seconds)
-#define FADE_DURATION 1.0f
+#define FADE_DURATION 0.5f
 #define DISPLAY_DURATION 4.0f  // Time to read each scene
 
 // ----------------------------------------------------------------------------

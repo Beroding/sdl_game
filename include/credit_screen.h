@@ -6,7 +6,7 @@
 #include <stdbool.h>
 
 #define MAX_CREDIT_SCENES 5
-#define CREDIT_SCENE_FADE_DURATION 1.0f
+#define CREDIT_SCENE_FADE_DURATION 0.5f
 #define CREDIT_SCENE_DISPLAY_DURATION 4.0f
 
 typedef enum {

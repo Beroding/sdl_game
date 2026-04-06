@@ -8,7 +8,8 @@ typedef enum {
     MUSIC_NONE,
     MUSIC_MENU,
     MUSIC_GAME,
-    MUSIC_BATTLE
+    MUSIC_BATTLE,
+    MUSIC_CREDIT
 } MusicType;
 
 typedef struct {
@@ -16,6 +17,7 @@ typedef struct {
     MIX_Audio *menu_music;      // Loaded audio data
     MIX_Audio *game_music;
     MIX_Audio *battle_music;
+    MIX_Audio *credit_music;
     
     MIX_Track *current_track;   // Currently playing track
     
@@ -37,6 +39,7 @@ void music_system_destroy(MusicSystem *music);
 void music_play_menu(MusicSystem *music);
 void music_play_game(MusicSystem *music);
 void music_play_battle(MusicSystem *music);
+void music_play_credits(MusicSystem *music);
 
 // Control playback
 void music_stop(MusicSystem *music);

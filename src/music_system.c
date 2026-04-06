@@ -63,7 +63,12 @@ MusicSystem* music_system_create(void) {
     
     music->battle_music = MIX_LoadAudio(music->mixer, "game_assets/music/battle_theme.mp3", false);
     if (!music->battle_music) {
-        printf("Warning: Could not load battle_theme.ogg: %s\n", SDL_GetError());
+        printf("Warning: Could not load battle_theme.mp3: %s\n", SDL_GetError());
+    }
+
+    music->credit_music = MIX_LoadAudio(music->mixer, "game_assets/music/credit_theme.mp3", false);
+    if (!music->credit_music){
+        printf("Warning: Could not load credit_theme.mp3: %s\n", SDL_GetError());
     }
     
     printf("Music system initialized (some tracks may be unavailable)\n");
@@ -83,6 +88,7 @@ void music_system_destroy(MusicSystem *music) {
     if (music->menu_music) MIX_DestroyAudio(music->menu_music);
     if (music->game_music) MIX_DestroyAudio(music->game_music);
     if (music->battle_music) MIX_DestroyAudio(music->battle_music);
+    if(music->credit_music) MIX_DestroyAudio(music->credit_music);
     
     // Destroy mixer and quit
     if (music->mixer) MIX_DestroyMixer(music->mixer);
@@ -156,6 +162,22 @@ void music_play_battle(MusicSystem *music) {
     }
     music_play_audio(music, music->battle_music);
     music->current_music = MUSIC_BATTLE;
+}
+
+void music_play_credits(MusicSystem *music) {
+    if (!music) return;
+    if (music->current_music == MUSIC_CREDIT) return;  // already playing
+    
+    if (!music->credit_music) {
+        static bool warned = false;
+        if (!warned) {
+            printf("Credit music not available (file missing)\n");
+            warned = true;
+        }
+        return;
+    }
+    music_play_audio(music, music->credit_music);
+    music->current_music = MUSIC_CREDIT;
 }
 
 void music_stop(MusicSystem *music) {

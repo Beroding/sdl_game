@@ -720,7 +720,7 @@ void game_update(struct Game *g) {
                 break;
             case STATE_CREDITS:
             default:
-                desired_music = MUSIC_NONE;
+                desired_music = MUSIC_CREDIT;
                 break;
         }
 
@@ -729,6 +729,7 @@ void game_update(struct Game *g) {
                 case MUSIC_MENU:    music_play_menu(g->music);    break;
                 case MUSIC_GAME:    music_play_game(g->music);    break;
                 case MUSIC_BATTLE:  music_play_battle(g->music);  break;
+                case MUSIC_CREDIT:  music_play_credits(g->music); break; 
                 default:            music_stop(g->music);         break;
             }
             last_music_state = desired_music;
