@@ -24,6 +24,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include "../include/game_screen.h"
+#include "../include/spawn_animation.h"
 #include "../include/music_system.h"
 
 // ----------------------------------------------------------------------------
@@ -48,6 +49,10 @@
 #define NPC_FRAME_HEIGHT 60
 #define NPC_FRAME_COUNT_ANIM 2         // Number of frames in NPC idle animation
 #define NPC_FRAME_DURATION 0.3f        // Seconds per frame
+
+// Guide NPC (knight) frame dimensions - ADJUST THESE!
+#define GUIDE_FRAME_WIDTH 16    // Change to match knight sprite
+#define GUIDE_FRAME_HEIGHT 16   // Change to match knight sprite
 
 // Dialogue box dimensions and positioning
 #define DIALOGUE_BOX_HEIGHT 200
@@ -345,6 +350,17 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
         SDL_DestroySurface(npc_surface);
     }
 
+    // Load guide NPC sprite
+    SDL_Surface *guide_surface = IMG_Load("game_assets/knight_idle_spritesheet.png");
+    if (!guide_surface) {
+        printf("Guide sprite not found, using default\n");
+        gs->guide_idle_texture = NULL;  // Falls back to npc_idle_texture
+    } else {
+        gs->guide_idle_texture = SDL_CreateTextureFromSurface(renderer, guide_surface);
+        SDL_SetTextureScaleMode(gs->guide_idle_texture, SDL_SCALEMODE_NEAREST);
+        SDL_DestroySurface(guide_surface);
+    }
+
     // Try to load a separate portrait for the NPC (used in dialogue)
     SDL_Surface *portrait_surface = IMG_Load("game_assets/npc1_portrait.png");
     if (!portrait_surface) {
@@ -388,6 +404,11 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     gs->score = 0;
     gs->level = 1;
 
+    gs->spawn_anim = spawn_animation_create(gs->player_x, gs->player_y,
+                                            gs->camera.x, gs->camera.y, 
+                                            gs->camera.zoom);
+    gs->spawn_complete = false;
+
     // ------------------------------------------------------------------------
     // Initialize NPCs
     // ------------------------------------------------------------------------
@@ -410,17 +431,17 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     strcpy(gs->npcs[0].dialogue_file, "game_assets/dialogues/naberius_encounter.txt");
     gs->npcs[0].dialogue_line = 0;
 
-    // NPC 1: The moving NPC at a different location
-    gs->npcs[1].x = 400.0f;
-    gs->npcs[1].y = 100.0f;
-    gs->npcs[1].target_x = 800.0f;
-    gs->npcs[1].target_y = 400.0f;
-    gs->npcs[1].speed = 80.0f;    // units per second
-    gs->npcs[1].move_pattern = 1;  // patrol
+    // NPC 1: The guide NPC - stays near player spawn
+    gs->npcs[1].x = 400.0f;        // Near player spawn (368, 90)
+    gs->npcs[1].y = 120.0f;
+    gs->npcs[1].target_x = 420.0f;
+    gs->npcs[1].target_y = 120.0f;
+    gs->npcs[1].speed = 0.0f;      // Not moving
+    gs->npcs[1].move_pattern = 0;  // idle - stays in place
     gs->npcs[1].move_timer = 2.0f;
     gs->npcs[1].current_frame = 0;
     gs->npcs[1].anim_timer = 0.0f;
-    gs->npcs[1].facing_right = true;
+    gs->npcs[1].facing_right = false;
     gs->npcs[1].is_moving = false;
     gs->npcs[1].is_active = true;
     gs->npcs[1].trigger_trail = true;  // This NPC will start the trail
@@ -475,6 +496,22 @@ void game_screen_update(GameScreen *gs, float delta_time) {
     if (!gs) return;
     
     gs->total_play_time += delta_time;
+
+    // ALWAYS update camera first (so it centers on player)
+    update_camera(gs);
+
+    // Handle spawn animation
+    if (gs->spawn_anim && !spawn_animation_is_complete(gs->spawn_anim)) {
+        spawn_animation_update(gs->spawn_anim, delta_time);
+        // Sync animation's camera reference to the updated camera
+        gs->spawn_anim->cam_x = gs->camera.x;
+        gs->spawn_anim->cam_y = gs->camera.y;
+        return; // Skip normal game updates, but camera is already centered
+    } else if (gs->spawn_anim && spawn_animation_is_complete(gs->spawn_anim)) {
+        spawn_animation_destroy(gs->spawn_anim);
+        gs->spawn_anim = NULL;
+        gs->spawn_complete = true;
+    }
     
     // If in dialogue, only update the dialogue system (no movement)
     if (gs->in_dialogue) {
@@ -1076,13 +1113,22 @@ void dialogue_render(SDL_Renderer *renderer, GameScreen *gs) {
         int portrait_x = PORTRAIT_OFFSET_X;
         int portrait_y = window_h - portrait_h - PORTRAIT_OFFSET_Y;
         
-        if (gs->npc_idle_texture) {
-            // Source rectangle: NPC sprite sheet has 2 frames per row.
-            // We use the first row for facing left? Actually we always show the
-            // talking NPC, but we animate the frames.
+        // Use knight sprite if talking to NPC 1 (guide), otherwise use npc1_idle
+        if (gs->active_npc_index == 1 && gs->guide_idle_texture) {
+            // Knight portrait - use row 0 (facing left), frame 0 for static portrait
+            SDL_FRect src = {
+                0.0f,  // Frame 0
+                0.0f,  // Row 0 = facing left
+                GUIDE_FRAME_WIDTH,
+                GUIDE_FRAME_HEIGHT
+            };
+            SDL_FRect dst = {portrait_x, portrait_y, portrait_w, portrait_h};
+            SDL_RenderTexture(renderer, gs->guide_idle_texture, &src, &dst);
+        } else if (gs->npc_idle_texture) {
+            // Original NPC portrait (Naberius)
             SDL_FRect src = {
                 (float)(gs->dialogue_npc_frame * NPC_FRAME_WIDTH),
-                (float)(2 * (NPC_FRAME_HEIGHT + 4)),   // Row index 2? This was a specific offset from original.
+                (float)(2 * (NPC_FRAME_HEIGHT + 4)),
                 NPC_FRAME_WIDTH, 
                 NPC_FRAME_HEIGHT
             };
@@ -1293,8 +1339,30 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
         float npc_screen_x = (npc->x * cam->zoom) - cam->x;
         float npc_screen_y = (npc->y * cam->zoom) - cam->y;
         
-        // Render NPC sprite
-        if (gs->npc_idle_texture) {
+         // --------------------------------------------------------------------
+        // Render NPC sprite - use guide texture for NPC 1, original for NPC 0
+        // --------------------------------------------------------------------
+        if (i == 1 && gs->guide_idle_texture) {
+            // Knight sprite - FLIP to face LEFT, smaller size
+            int row = 0;  // Use row 0 (right-facing animation)
+            float knight_size = 18 * cam->zoom;
+            
+            SDL_FRect src_sprite = {
+                .x = (float)(npc->current_frame * GUIDE_FRAME_WIDTH),
+                .y = (float)(row * GUIDE_FRAME_HEIGHT),
+                .w = GUIDE_FRAME_WIDTH,
+                .h = GUIDE_FRAME_HEIGHT
+            };
+            SDL_FRect dst_sprite = {
+                .x = npc_screen_x - knight_size / 2,
+                .y = npc_screen_y - knight_size / 2,
+                .w = knight_size,
+                .h = knight_size
+            };
+            // FLIP HORIZONTALLY to make right-facing sprite appear left-facing
+            SDL_RenderTextureRotated(renderer, gs->guide_idle_texture, &src_sprite, &dst_sprite, 0.0, NULL, SDL_FLIP_HORIZONTAL);
+        } else if (gs->npc_idle_texture) {
+            // Original NPC sprite (Naberius) - full size, can face either direction
             int row = npc->facing_right ? 3 : 1;
             SDL_FRect src_sprite = {
                 .x = (float)(npc->current_frame * NPC_FRAME_WIDTH),
@@ -1315,12 +1383,20 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
         // THREE-ZONE PROMPT SYSTEM
         // --------------------------------------------------------------------
         if (!gs->in_dialogue) {
-            float close_dist = 50.0f;           // Can interact
-            float medium_dist = 120.0f;         // Can see/hear but not talk
-            // Beyond medium = far (show "..." or nothing)
+            // Different radius for different NPCs
+            float close_dist, medium_dist;
             
-            float close_dist_sq = close_dist * close_dist;       // 2500
-            float medium_dist_sq = medium_dist * medium_dist;     // 14400
+            if (i == 1) {  // Knight (guide NPC) - adjusted interaction zones
+                close_dist = 20.0f;      // "Press E to talk" radius (small)
+                medium_dist = 35.0f;      // "Hey..." radius - SMALLER
+                // "..." starts at 35px+ (WIDER range - 35 to infinity)
+            } else {        // Naberius and others - original values
+                close_dist = 50.0f;
+                medium_dist = 120.0f;
+            }
+            
+            float close_dist_sq = close_dist * close_dist;
+            float medium_dist_sq = medium_dist * medium_dist;
             
             if (dist_sq < close_dist_sq) {
                 // ZONE 1: CLOSE - Show "Press E to talk" (yellow)
@@ -1345,13 +1421,24 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
                 }
             } 
             else if (dist_sq < medium_dist_sq) {
-                // ZONE 2: MEDIUM - Show mysterious question (RED, only for Naberius/NPC 0)
-                if (i == 0) {  // Naberius only
+                // ZONE 2: MEDIUM - Different text per NPC
+                const char *medium_text = NULL;
+                SDL_Color medium_color = {255, 255, 255, 255};
+                
+                if (i == 0) {  // Naberius
+                    medium_text = "Who are you? Where are you going?";
+                    medium_color = (SDL_Color){255, 50, 50, 255};  // Red
+                } else if (i == 1) {  // Knight
+                    medium_text = "Hey...";
+                    medium_color = (SDL_Color){200, 200, 200, 255};  // Grey
+                }
+                
+                if (medium_text) {
                     SDL_Surface *surf = TTF_RenderText_Blended(
-                        gs->font_bold,  // Bold font for emphasis
-                        "Who are you? Where are you going?",
+                        gs->font_bold,
+                        medium_text,
                         0,
-                        (SDL_Color){255, 50, 50, 255}  // Red color
+                        medium_color
                     );
                     if (surf) {
                         SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
@@ -1359,7 +1446,8 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
                         SDL_GetTextureSize(tex, &w, &h);
                         SDL_FRect rect = {
                             npc_screen_x - w / 2,
-                            npc_screen_y - npc_sprite_size / 2 - 25,  // Above NPC
+                            // Knight's text is lower (closer to NPC)
+                            npc_screen_y - npc_sprite_size / 2 - 10,
                             w, h
                         };
                         SDL_RenderTexture(renderer, tex, NULL, &rect);
@@ -1367,7 +1455,6 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
                         SDL_DestroySurface(surf);
                     }
                 }
-                // For other NPCs in medium zone, show nothing or faint "..."
             }
             else {
                 // ZONE 3: FAR - Show faint "..." 
@@ -1467,6 +1554,12 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
             .h = h
         };
         SDL_RenderTexture(renderer, gs->title_text, NULL, &title_rect);
+    }
+
+    // Render spawn animation if active
+    if (gs->spawn_anim) {
+        spawn_animation_render(renderer, gs->spawn_anim, 
+                              cam->viewport_w, cam->viewport_h);
     }
 
     // Finally, draw the dialogue UI if active (overwrites everything)
@@ -1570,6 +1663,7 @@ void game_screen_destroy(GameScreen *gs) {
         if (gs->idle_texture) SDL_DestroyTexture(gs->idle_texture);
         if (gs->run_texture) SDL_DestroyTexture(gs->run_texture);
         if (gs->npc_idle_texture) SDL_DestroyTexture(gs->npc_idle_texture);
+        if (gs->guide_idle_texture) SDL_DestroyTexture(gs->guide_idle_texture);
         if (gs->npc_portrait) SDL_DestroyTexture(gs->npc_portrait);
         if (gs->dialogue_box_texture) SDL_DestroyTexture(gs->dialogue_box_texture);
         if (gs->dialogue_name_texture) SDL_DestroyTexture(gs->dialogue_name_texture);

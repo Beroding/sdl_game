@@ -1,0 +1,25 @@
+Game Created by Team Ghostrunner
+
+code: https://github.com/Beroding/sdl_game
+
+----------------Team Members----------------
+Bernard Lie            Programmer/CEO
+Brian Hanson Siwen     Programmer/Designer
+Hansen Christian       Documenter
+Orlando Edmund         Documenter/Writer
+努日耶                  Documenter/Programmer
+王泽媛                  CIO
+
+-------------------Musics-------------------
+lorem
+lorem
+lorem
+lorem
+
+---------------Maps & Images---------------
+lorem
+lorem
+lorem
+lorem
+
+Thank You For Playing Our Game 

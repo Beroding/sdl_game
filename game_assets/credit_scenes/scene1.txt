@@ -1,0 +1,5 @@
+----------------GAME CREDITS----------------
+
+Game Created by Team Ghostrunner
+
+Code: github.com/Beroding/sdl_game

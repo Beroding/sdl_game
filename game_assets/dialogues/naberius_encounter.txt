@@ -1,14 +1,20 @@
-# Main temple outer walls
-wall 400 200 1120 100    # Top bar of cross
-wall 400 800 1120 100    # Bottom bar of cross  
-wall 700 300 500 500     # Center vertical bar
+# Naberius Gate Keeper Encounter
+# Format: Speaker: Text | NextLine (optional)
 
-# Circular rooms (approximate as boxes or multiple segments)
-wall 200 400 150 150     # Left circle room
-wall 1500 400 150 150    # Right circle room
-wall 960 960 150 150     # Bottom circle room
+Naberius: I am Naberius, the Gate Keeper. I am the voice that whispers in the silence before the fall. Some call me a demon, a warden, a crow perched upon the edge of eternity.
+Naberius: Vermin Soul, You are not supposed to be here... Retrace your steps, NOW!
 
-# The throne room at top
-wall 700 50 500 150
+[CHOICE] You | How will you respond? | I'm not retreating! | ...Fine, I'll leave. | 4 | 9
 
-# Bridges and walkways (leave these EMPTY - no walls)
+# Choice A - Stand your ground (line 4)
+You: I'm not taking any step behind my back!
+[PLAY_SFX laugh]
+Naberius: Kekekekek, you misunderstood it human. That was not a request. That was the only mercy I offer and you just threw it back.
+Naberius: So now… we do this the HARD WAY. Don't disappoint me.
+[BATTLE]
+
+# Choice B - Leave (line 8)
+You: ...Fine, I'll leave.
+Naberius: Wise choice, vermin. The Gate is not for the weak.
+
+# End

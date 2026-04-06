@@ -24,6 +24,7 @@
 #include "../include/save_menu.h"
 #include "../include/music_system.h"
 #include "../include/sfx_system.h"
+#include "../include/credit_screen.h"
 
 #define SDL_FLAGS SDL_INIT_VIDEO
 #define WINDOW_TITLE "AfterLife"
@@ -61,6 +62,7 @@ struct Game
     float play_time;        // Accumulated across sessions for save files
     time_t session_start;   // Tracks current session separately
     int current_save_slot;  // -1 = no active save (new game)
+    CreditScreen *credits;
 
     MusicSystem *music;
     SFXSystem *sfx;
@@ -175,6 +177,8 @@ bool game_init_sdl(struct Game *g)
     g->play_time = 0;
     g->current_save_slot = -1;
 
+    g->credits = NULL;
+
     return true;
 }
 
@@ -230,6 +234,7 @@ void game_free(struct Game **game)
         save_system_destroy(g->save_system);
         music_system_destroy(g->music);
         sfx_destroy(g->sfx);
+        credit_screen_destroy(g->credits);
 
         if(g->renderer) 
         {
@@ -469,7 +474,26 @@ void game_events(struct Game *g)
 {
     while (SDL_PollEvent(&g->event)) 
     {
-        // Save menu has highest priority when open
+        // === CREDITS STATE - Handle first and continue ===
+        if (g->state == STATE_CREDITS) {
+            switch (g->event.type) {
+                case SDL_EVENT_KEY_DOWN:
+                    if (g->credits) {
+                        credit_screen_handle_key(g->credits, &g->event.key);
+                    }
+                    break;
+
+                case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                    // Optional: click to skip scene too
+                    if (g->credits) {
+                        g->credits->skip_requested = true;
+                    }
+                    break;
+            }
+            continue;  // IMPORTANT: Don't process this event further!
+        }
+
+        // Save menu
         if (g->state == STATE_SAVE_MENU && save_menu_is_open(g->save_menu)) {
             switch (g->event.type) {
                 case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -633,6 +657,12 @@ void game_events(struct Game *g)
                     return_to_menu(g);
                 }
                 break;
+            
+            case STATE_CREDITS:
+                if (g->credits) {
+                    credit_screen_handle_key(g->credits, &g->event.key);
+                }
+                break;
 
             default:
                 break;
@@ -671,13 +701,13 @@ void game_update(struct Game *g) {
                 desired_music = MUSIC_MENU;
                 break;
             case STATE_LOADING:
-                desired_music = MUSIC_NONE;  // No music during loading
+                desired_music = MUSIC_MENU;  // music during loading
                 break;
             case STATE_PLAYING:
                 // Only play game music if not paused and no other menu is open
                 if ((!g->pause_menu || !pause_menu_is_open(g->pause_menu)) &&
                     (!g->save_menu || !save_menu_is_open(g->save_menu))) {
-                    desired_music = MUSIC_GAME;
+                    // desired_music = MUSIC_GAME;
                 } else {
                     desired_music = MUSIC_NONE;
                 }
@@ -866,7 +896,35 @@ void game_update(struct Game *g) {
             break;
 
         case STATE_CREDITS:
-            // Nothing to update; input handling will return to menu
+            if (!g->credits) {
+                // Create credits once
+                SDL_DisplayID display = SDL_GetPrimaryDisplay();
+                const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(display);
+                int w = mode ? mode->w : WINDOW_WIDTH;
+                int h = mode ? mode->h : WINDOW_HEIGHT;
+                
+                g->credits = credit_screen_create(g->renderer, w, h);
+                if (g->credits) {
+                    const char *scenes[] = {
+                        "game_assets/credit_scenes/scene1.txt",
+                        "game_assets/credit_scenes/scene2.txt",
+                        "game_assets/credit_scenes/scene3.txt",
+                        "game_assets/credit_scenes/scene4.txt",
+                        "game_assets/credit_scenes/scene5.txt"
+                    };
+                    credit_screen_load_scenes(g->credits, scenes, 5);
+                }
+            }
+            
+            if (g->credits) {
+                credit_screen_update(g->credits, 0.016f);  // ~60 FPS
+                
+                if (credit_screen_is_complete(g->credits)) {
+                    credit_screen_destroy(g->credits);
+                    g->credits = NULL;
+                    return_to_menu(g);
+                }
+            }
             break;
     }
 }
@@ -916,8 +974,9 @@ void game_draw(struct Game *g) {
             break;
             
         case STATE_CREDITS:
-            SDL_SetRenderDrawColor(g->renderer, 10, 10, 30, 255);
-            SDL_RenderClear(g->renderer);
+            if (g->credits) {
+                credit_screen_render(g->renderer, g->credits);
+            }
             break;
     }
     

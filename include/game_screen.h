@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include "dialogue_loader.h"
 #include "collision_system.h"
+#include "spawn_animation.h"
 
 #define MAX_LINE_LENGTH 256
 #define MAX_NPCS 4
@@ -119,7 +120,11 @@ typedef struct {
     SDL_Texture *run_texture;
     SDL_Texture *title_text;
     SDL_Texture *npc_idle_texture;
+    SDL_Texture *guide_idle_texture;     // Guide NPC only
     SDL_Texture *npc_portrait;
+
+    SpawnAnimation *spawn_anim;
+    bool spawn_complete;
     
     /* Dialogue system state */
     bool in_dialogue;

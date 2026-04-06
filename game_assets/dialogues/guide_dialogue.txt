@@ -1,4 +1,7 @@
-Guide: Hey, traveler! I have something important to show you. Follow me!
-You: Lead the way.
-Guide: The path is marked with golden arrows. Good luck!
-Guide: (The guide disappears, leaving a trail of arrows.)
+Lost Soul: Hey, sinner, trying to escape too? You'd better knock it off.
+You: Who are you?
+Lost Soul: Just like you, trying to escape this hell. I once was...
+Lost Soul: I won't stop you though. Here—take this piece of wood I found. you might need it.
+You: Not sure why you’re helping me, but… thanks.
+Lost Soul: I am not sure either... Something feels different...
+Lost Soul: Anyways, if you find someone with horns and wings... turn back while you can.
