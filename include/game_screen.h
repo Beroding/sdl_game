@@ -5,6 +5,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 #include <stdbool.h>
 #include "dialogue_loader.h"
+#include "collision_system.h"
 
 #define MAX_LINE_LENGTH 256
 #define MAX_NPCS 4
@@ -17,6 +18,13 @@ typedef struct {
     int viewport_w;
     int viewport_h;
 } Camera;
+
+typedef enum {
+    FACING_DOWN,
+    FACING_UP, 
+    FACING_LEFT,
+    FACING_RIGHT
+} FacingDirection;
 
 /* NPC structure – must be defined before GameScreen */
 typedef struct {
@@ -53,6 +61,8 @@ typedef struct {
     float player_y;
     float npc_x;
     float npc_y;
+
+    CollisionWorld *collision;  // NEW: collision system
 
     /* Progress tracking */
     int score;
@@ -93,6 +103,7 @@ typedef struct {
     int current_frame;
     bool facing_right;
     bool is_moving;
+    FacingDirection facing_dir;
     
     bool npc_facing_right;
     bool player_near_npc;   /* True when close enough to talk */

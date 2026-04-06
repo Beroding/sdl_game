@@ -1,0 +1,6 @@
+# Format: type x y w h
+wall 0 0 200 600
+wall 600 0 400 200
+wall 1000 400 300 500
+wall 300 700 500 200
+trigger 500 500 50 50 ENTER_CAVE

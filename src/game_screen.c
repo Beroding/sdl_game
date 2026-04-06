@@ -11,6 +11,7 @@
 // - Arrow trail system that appears after interacting with a special NPC
 // - Adjustable player spawn location
 // ============================================================================
+#define DEBUG_COLLISION
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -284,6 +285,17 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
 
     printf("Map size: %dx%d\n", gs->map_width, gs->map_height);
 
+    gs->collision = collision_world_create(gs->map_width, gs->map_height);
+
+    // Try to load from file first, fallback to hardcoded if missing
+    if (!collision_load_from_file(gs->collision, "game_assets/maps/map_1_collision.txt")) {
+        printf("Using fallback hardcoded walls\n");
+        collision_add_wall(gs->collision, 0, 0, 200, 600);        // Left forest
+        collision_add_wall(gs->collision, 600, 0, 400, 200);      // Top mountain
+        collision_add_wall(gs->collision, 1000, 400, 300, 500);   // Right cliff
+        collision_add_wall(gs->collision, 300, 700, 500, 200);    // Bottom lake
+    }
+
     // Load player sprites (idle and run animations)
     SDL_Surface *idle_surface = IMG_Load("game_assets/pc_idle.png");
     if (!idle_surface) {
@@ -499,11 +511,20 @@ void game_screen_update(GameScreen *gs, float delta_time) {
     }
     
     // Apply movement
-    if (gs->moving_right) gs->player_x += MOVE_SPEED;
-    if (gs->moving_left)  gs->player_x -= MOVE_SPEED;
-    if (gs->moving_up)    gs->player_y -= MOVE_SPEED;
-    if (gs->moving_down)  gs->player_y += MOVE_SPEED;
+    float target_x = gs->player_x;
+    float target_y = gs->player_y;
+
+    if (gs->moving_right) target_x += MOVE_SPEED;
+    if (gs->moving_left)  target_x -= MOVE_SPEED;
+    if (gs->moving_up)    target_y -= MOVE_SPEED;
+    if (gs->moving_down)  target_y += MOVE_SPEED;
     
+    // Use collision system for smooth sliding movement
+    collision_resolve_movement(gs->collision,
+                            &gs->player_x, &gs->player_y,
+                            target_x, target_y,
+                            8.0f);  // player radius
+
     // Keep player inside map boundaries
     gs->player_x = clamp(gs->player_x, 0, gs->map_width);
     gs->player_y = clamp(gs->player_y, 0, gs->map_height);
@@ -1243,6 +1264,10 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
     float sprite_size = 16 * cam->zoom;
     float npc_sprite_size = 35 * cam->zoom;
 
+    #ifdef DEBUG_COLLISION
+        collision_render_debug(gs->collision, renderer, cam->x, cam->y, cam->zoom);
+    #endif
+
     // ------------------------------------------------------------------------
     // Draw all NPCs
     // ------------------------------------------------------------------------
@@ -1537,6 +1562,7 @@ void game_screen_handle_mouse(GameScreen *gs, SDL_MouseButtonEvent *mouse, SDL_R
 void game_screen_destroy(GameScreen *gs) {
     if (gs) {
         if (gs->title_text) SDL_DestroyTexture(gs->title_text);
+        collision_world_destroy(gs->collision);
         if (gs->font) TTF_CloseFont(gs->font);
         if (gs->font_bold) TTF_CloseFont(gs->font_bold);
         if (gs->font_dialogue && gs->font_dialogue != gs->font) TTF_CloseFont(gs->font_dialogue);

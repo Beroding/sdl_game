@@ -1,7 +1,7 @@
 compile: build run
 
 build:
-	gcc src/main.c src/menu_screen.c src/loading_screen.c src/game_screen.c src/battle_system.c src/opening_animation.c src/video_player.c  src/dialogue_loader.c src/pause_menu.c src/save_menu.c src/music_system.c src/sfx_system.c src/save_system.c -o main.exe \
+	gcc src/main.c src/menu_screen.c src/loading_screen.c src/collision_system.c src/game_screen.c src/battle_system.c src/opening_animation.c src/video_player.c  src/dialogue_loader.c src/pause_menu.c src/save_menu.c src/music_system.c src/sfx_system.c src/save_system.c -o main.exe \
 	-I /ucrt64/include \
 	-L /ucrt64/lib \
 	-lSDL3_image -lSDL3_ttf -lSDL3_mixer -lSDL3 -lm
