@@ -136,6 +136,8 @@ typedef struct {
     DialogueScript *current_script;
     int current_line_index;
     
+    bool knight_first_talk_done;
+    
     /* Typewriter effect */
     int dialogue_char_index;
     float dialogue_timer;

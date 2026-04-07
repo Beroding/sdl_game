@@ -361,6 +361,8 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
         SDL_DestroySurface(guide_surface);
     }
 
+    gs->knight_first_talk_done = false;
+
     // Try to load a separate portrait for the NPC (used in dialogue)
     SDL_Surface *portrait_surface = IMG_Load("game_assets/npc1_portrait.png");
     if (!portrait_surface) {
@@ -778,6 +780,10 @@ void dialogue_end(GameScreen *gs) {
     gs->in_dialogue = false;
     gs->play_battle_music_requested = false;
     
+    if (gs->active_npc_index == 1) {
+        gs->knight_first_talk_done = true;
+    }
+
     // If this NPC was the one that triggers a trail, activate it now
     if (gs->active_npc_index >= 0 && gs->npcs[gs->active_npc_index].trigger_trail) {
         generate_trail(gs);
@@ -1627,7 +1633,13 @@ void game_screen_handle_input(GameScreen *gs, SDL_KeyboardEvent *key) {
                 
                 if (closest_npc >= 0) {
                     gs->active_npc_index = closest_npc;
-                    dialogue_start_script(gs, NULL, gs->npcs[closest_npc].dialogue_file);
+                    // dialogue_start_script(gs, NULL, gs->npcs[closest_npc].dialogue_file);
+
+                    if (closest_npc == 1 && gs->knight_first_talk_done) {
+                        dialogue_start_script(gs, NULL, "game_assets/dialogues/guide_dialogue_repeat.txt");
+                    } else {
+                        dialogue_start_script(gs, NULL, gs->npcs[closest_npc].dialogue_file);
+                    }
                 }
             }
             break;
