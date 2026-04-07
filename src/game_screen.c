@@ -292,7 +292,7 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
 
     // Initialize wandering enemies
     wandering_enemies_init(gs->wandering_enemies, &gs->wandering_enemy_count, 
-                            gs->map_width, gs->map_height);
+                            gs->map_width, gs->map_height, renderer);
 
     gs->collision = collision_world_create(gs->map_width, gs->map_height);
 

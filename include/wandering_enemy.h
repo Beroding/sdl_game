@@ -46,13 +46,13 @@ typedef struct {
     bool facing_right;
 } PlayerCombatStats;
 
-void wandering_enemies_init(WanderingEnemy enemies[], int *count, int map_w, int map_h);
+void wandering_enemies_init(WanderingEnemy enemies[], int *count, int map_w, int map_h, SDL_Renderer *renderer);
 void wandering_enemies_update(WanderingEnemy enemies[], int count, 
-                               float player_x, float player_y, bool player_in_dialogue,
-                               float delta_time, int map_w, int map_h);
+                                float player_x, float player_y, bool player_in_dialogue,
+                                float delta_time, int map_w, int map_h);
 void wandering_enemies_render(SDL_Renderer *renderer, WanderingEnemy enemies[], int count,
-                               float cam_x, float cam_y, float zoom,
-                               TTF_Font *font_small);
+                                float cam_x, float cam_y, float zoom,
+                                TTF_Font *font_small);
 void player_attack(PlayerCombatStats *player, WanderingEnemy enemies[], int enemy_count);
 
 #endif

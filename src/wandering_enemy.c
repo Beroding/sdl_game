@@ -1,10 +1,40 @@
 #include "../include/wandering_enemy.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-void wandering_enemies_init(WanderingEnemy enemies[], int *count, int map_w, int map_h) {
+#include <SDL3_image/SDL_image.h>
+
+// bat sprite
+#define BAT_FRAME_WIDTH 12
+#define BAT_FRAME_HEIGHT 11
+#define BAT_FRAME_COUNT 4
+#define BAT_NEXT_FRAME 16
+#define BAT_SHEET_OFFSET_X 2
+#define BAT_SHEET_OFFSET_Y 2
+#define BAT_ANIMATION_SPEED 5
+#define BAT_FLY_ANIM_SRC "game_assets/bat_fly_anim_spritesheet.png"
+#define BAT_RENDER_SIZE 20
+#define BAT_HP_BAR_SIZE 4
+
+static SDL_Texture *bat_texture = NULL;
+
+void wandering_enemies_init(WanderingEnemy enemies[], int *count, int map_w, int map_h, SDL_Renderer *renderer) {
+    
+    if (!bat_texture && renderer) {
+        SDL_Surface *surf = IMG_Load(BAT_FLY_ANIM_SRC);
+        if (surf) {
+            bat_texture = SDL_CreateTextureFromSurface(renderer, surf);
+            SDL_SetTextureScaleMode(bat_texture, SDL_SCALEMODE_NEAREST);
+            SDL_DestroySurface(surf);
+            printf("Bat sprite loaded: %dx%d frames\n", BAT_FRAME_WIDTH, BAT_FRAME_HEIGHT);
+        } else {
+            printf("Failed to load bat sprite: %s\n", SDL_GetError());
+        }
+    }
+
     *count = 3;
     
     for (int i = 0; i < *count; i++) {
@@ -32,9 +62,8 @@ void wandering_enemies_init(WanderingEnemy enemies[], int *count, int map_w, int
     }
 }
 
-void wandering_enemies_update(WanderingEnemy enemies[], int count, 
-                               float player_x, float player_y, bool player_in_dialogue,
-                               float delta_time, int map_w, int map_h) {
+void wandering_enemies_update(WanderingEnemy enemies[], int count, float player_x, float player_y, bool player_in_dialogue, float delta_time, int map_w, int map_h) {
+    
     for (int i = 0; i < count; i++) {
         WanderingEnemy *enemy = &enemies[i];
         if (!enemy->active) continue;
@@ -43,13 +72,20 @@ void wandering_enemies_update(WanderingEnemy enemies[], int count,
             enemy->hit_flash -= delta_time * 5.0f;
             if (enemy->hit_flash < 0) enemy->hit_flash = 0;
         }
+
+         /* Update animation - single update for all states */
+        enemy->anim_timer += delta_time;
+        if (enemy->anim_timer >= 0.1f) {
+            enemy->anim_timer = 0;
+            enemy->current_frame = (enemy->current_frame + 1) % BAT_FRAME_COUNT;
+        }
         
         switch (enemy->state) {
             case ENEMY_STATE_PATROL: {
                 float dx = enemy->target_x - enemy->x;
                 float dy = enemy->target_y - enemy->y;
                 float dist = sqrtf(dx*dx + dy*dy);
-                
+
                 if (dist < 5.0f) {
                     enemy->target_x = enemy->x + (rand() % 300 - 150);
                     enemy->target_y = enemy->y + (rand() % 300 - 150);
@@ -81,6 +117,7 @@ void wandering_enemies_update(WanderingEnemy enemies[], int count,
                 float dx = player_x - enemy->x;
                 float dy = player_y - enemy->y;
                 float dist = sqrtf(dx*dx + dy*dy);
+
                 
                 if (dist > 200.0f) {
                     enemy->state = ENEMY_STATE_PATROL;
@@ -131,48 +168,74 @@ void wandering_enemies_update(WanderingEnemy enemies[], int count,
     }
 }
 
-void wandering_enemies_render(SDL_Renderer *renderer, WanderingEnemy enemies[], int count,
-                               float cam_x, float cam_y, float zoom,
-                               TTF_Font *font_small) {
+void wandering_enemies_render(SDL_Renderer *renderer, WanderingEnemy enemies[], int count, float cam_x, float cam_y, float zoom, TTF_Font *font_small) {
+
     for (int i = 0; i < count; i++) {
         WanderingEnemy *enemy = &enemies[i];
         if (!enemy->active) continue;
         
         float screen_x = (enemy->x * zoom) - cam_x;
         float screen_y = (enemy->y * zoom) - cam_y;
-        float sprite_size = 35 * zoom;
+        float sprite_size = BAT_RENDER_SIZE * zoom;
         
-        SDL_Color enemy_color = {200, 50, 50, 255};
-        
-        if (enemy->hit_flash > 0) {
-            enemy_color.r = 255;
-            enemy_color.g = 255;
-            enemy_color.b = 255;
-        }
-        
+        /* Calculate alpha for dead/hit states */
         Uint8 alpha = 255;
         if (enemy->state == ENEMY_STATE_DEAD) {
             alpha = (Uint8)(255 * (enemy->dead_timer / 3.0f));
         }
+
+        /* White flash effect - modulate texture color */
+        if (enemy->hit_flash > 0) {
+            SDL_SetTextureColorMod(bat_texture, 255, 255, 255);
+        } else {
+            SDL_SetTextureColorMod(bat_texture, 200, 200, 200);
+        }
+        SDL_SetTextureAlphaMod(bat_texture, alpha);
         
-        SDL_SetRenderDrawColor(renderer, enemy_color.r, enemy_color.g, enemy_color.b, alpha);
-        
-        SDL_FRect enemy_rect = {
-            screen_x - sprite_size / 2,
-            screen_y - sprite_size / 2,
-            sprite_size,
-            sprite_size
+        /* Source rectangle from sprite sheet */
+        SDL_FRect src = {
+            .x = (float)(BAT_SHEET_OFFSET_X + enemy->current_frame * BAT_NEXT_FRAME),
+            .y = (float)(BAT_SHEET_OFFSET_Y),
+            .w = BAT_FRAME_WIDTH,
+            .h = BAT_FRAME_HEIGHT
         };
-        SDL_RenderFillRect(renderer, &enemy_rect);
+
+        printf("Frame %d: src=(%f,%f %fx%f)\n", enemy->current_frame, src.x, src.y, src.w, src.h);
+        
+        /* Destination on screen */
+        SDL_FRect dst = {
+            .x = screen_x - sprite_size / 2,
+            .y = screen_y - sprite_size / 2,
+            .w = sprite_size,
+            .h = sprite_size
+        };
+        
+        if (bat_texture) {
+            SDL_FlipMode flip = enemy->facing_right ? SDL_FLIP_NONE : SDL_FLIP_HORIZONTAL; /* Flip horizontally when facing left, no flip when facing right */
+
+            SDL_RenderTextureRotated(renderer, bat_texture, &src, &dst, 0.0, NULL, flip);
+        } else {
+            /* Fallback: colored rectangle if texture failed */
+            SDL_Color enemy_color = {200, 50, 50, alpha};
+            if (enemy->hit_flash > 0) {
+                enemy_color.r = 255; enemy_color.g = 255; enemy_color.b = 255;
+            }
+            SDL_SetRenderDrawColor(renderer, enemy_color.r, enemy_color.g, enemy_color.b, alpha);
+            SDL_RenderFillRect(renderer, &dst);
+        }
         
         // HP bar
         if (enemy->state != ENEMY_STATE_DEAD) {
             float hp_pct = enemy->hp / enemy->max_hp;
             float bar_w = sprite_size;
-            float bar_h = 6 * zoom;
+            float bar_h = BAT_HP_BAR_SIZE * zoom;
             
             SDL_SetRenderDrawColor(renderer, 100, 0, 0, alpha);
-            SDL_FRect hp_bg = {screen_x - bar_w/2, screen_y - sprite_size/2 - bar_h - 5, bar_w, bar_h};
+            SDL_FRect hp_bg = {
+                screen_x - bar_w/2, 
+                screen_y - sprite_size/2 - bar_h - 5, 
+                bar_w, 
+                bar_h};
             SDL_RenderFillRect(renderer, &hp_bg);
             
             Uint8 r = (Uint8)(255 * (1.0f - hp_pct));
@@ -181,7 +244,7 @@ void wandering_enemies_render(SDL_Renderer *renderer, WanderingEnemy enemies[], 
             SDL_FRect hp_fill = {screen_x - bar_w/2, screen_y - sprite_size/2 - bar_h - 5, bar_w * hp_pct, bar_h};
             SDL_RenderFillRect(renderer, &hp_fill);
             
-            // Level
+            // Level text above HP bar
             if (font_small) {
                 char level_str[16];
                 snprintf(level_str, sizeof(level_str), "Lv.%d", enemy->level);
