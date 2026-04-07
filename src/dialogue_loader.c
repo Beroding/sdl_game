@@ -36,6 +36,16 @@ static void parse_line(char *line, DialogueEntry *entry) {
     if (strlen(line) == 0 || line[0] == '#' || line[0] == '/') return;
     
     // ============================================================================
+    // SPECIAL COMMAND: [GIVE_CLUB] - Player obtains the club weapon
+    // ============================================================================
+    if (strncmp(line, "[GIVE_CLUB]", 11) == 0) {
+        entry->gives_club = true;
+        strcpy(entry->speaker, "SYSTEM");
+        entry->text[0] = '\0';  // Silent command
+        return;
+    }
+
+    // ============================================================================
     // SPECIAL COMMAND: [BATTLE] - Triggers combat
     // ============================================================================
     
@@ -185,11 +195,13 @@ DialogueScript* dialogue_load(const char *filename) {
         if (strlen(script->lines[script->line_count].text) > 0 ||
             script->lines[script->line_count].triggers_battle ||
             script->lines[script->line_count].play_battle_music ||
-            script->lines[script->line_count].play_sfx) {
+            script->lines[script->line_count].play_sfx ||
+            script->lines[script->line_count].gives_club) {
             
             // Auto-set next line if not specified
             if (script->lines[script->line_count].next_line == -1 && 
-                !script->lines[script->line_count].is_player_choice) {
+            !script->lines[script->line_count].is_player_choice) {
+            // Allow gives_club to auto-advance too
                 script->lines[script->line_count].next_line = script->line_count + 1;
             }
             

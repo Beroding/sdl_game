@@ -48,6 +48,8 @@ typedef struct {
     int next_line_a;        // Line index for choice A
     int next_line_b;        // Line index for choice B
 
+    bool gives_club;         // True if this line gives player the club
+
     bool play_sfx;          // if true, play a sound effect (e.g., laugh)
     char sfx_name[32];      // name of the sound effect (e.g., "laugh")
 

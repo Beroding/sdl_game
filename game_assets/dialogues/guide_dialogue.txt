@@ -2,13 +2,16 @@ Lost Soul: Hey, sinner, trying to escape too? You'd better knock it off.
 You: Who are you?
 Lost Soul: Just like you, trying to escape this hell. I once was...
 Lost Soul: I won't stop you though. In fact, Here—take this piece of wood I found. You might need it.
-[CHOICE] You | What will you do? | (Accept the wood) | (Refuse the wood) | 5 | 9
+[CHOICE] You | What will you do? | (Accept the wood) | (Refuse the wood) | 5 | 11
 
+[GIVE_CLUB]
 You: Not sure why you're helping me, but… thanks.
 Lost Soul: I am not sure either.
 Lost Soul: Anyways, if you find someone with horns and wings... turn back while you can.
-[GOTO] 12
+[GOTO] 15
 
 You: Why should I?
 Lost Soul: Just take it. You might need it...
+[GIVE_CLUB]
+You: Sure...
 Lost Soul: Anyways, if you find someone with horns and wings... turn back while you can.

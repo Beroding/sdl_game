@@ -290,6 +290,10 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
 
     printf("Map size: %dx%d\n", gs->map_width, gs->map_height);
 
+    // Initialize wandering enemies
+    wandering_enemies_init(gs->wandering_enemies, &gs->wandering_enemy_count, 
+                            gs->map_width, gs->map_height);
+
     gs->collision = collision_world_create(gs->map_width, gs->map_height);
 
     // Try to load from file first, fallback to hardcoded if missing
@@ -340,6 +344,11 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
         gs->font_dialogue = gs->font;   // Fallback to the normal font
     }
 
+    gs->font_small = TTF_OpenFont("game_assets/Roboto_Medium.ttf", 20);
+    if (!gs->font_small) {
+        gs->font_small = gs->font;  // fallback
+    }
+
     // Load NPC sprite (world idle animation)
     SDL_Surface *npc_surface = IMG_Load("game_assets/npc1_idle.png");
     if (!npc_surface) {
@@ -362,6 +371,10 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     }
 
     gs->knight_first_talk_done = false;
+    club_notification_init(&gs->club_notify);
+
+    gs->has_club = false;
+    gs->club_notify_timer = 0.0f;
 
     // Try to load a separate portrait for the NPC (used in dialogue)
     SDL_Surface *portrait_surface = IMG_Load("game_assets/npc1_portrait.png");
@@ -374,12 +387,19 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
         SDL_DestroySurface(portrait_surface);
     }
 
+    gs->renderer = renderer;
+
     // Animation state initialisation
     gs->frame_counter = 0;
     gs->current_frame = 0;
     gs->facing_right = true;
     gs->is_moving = false;
     
+    // Initialize player stats
+    gs->player_hp = 100;
+    gs->player_max_hp = 100;
+    gs->player_level = 1;
+
     gs->moving_left = false;
     gs->moving_right = false;
     gs->moving_up = false;
@@ -498,6 +518,8 @@ void game_screen_update(GameScreen *gs, float delta_time) {
     if (!gs) return;
     
     gs->total_play_time += delta_time;
+    
+    dialogue_update(gs, delta_time, gs->renderer);
 
     // ALWAYS update camera first (so it centers on player)
     update_camera(gs);
@@ -521,6 +543,32 @@ void game_screen_update(GameScreen *gs, float delta_time) {
         return;
     }
     
+    // Update club notification
+    club_notification_update(&gs->club_notify, delta_time);
+    if (club_notification_is_active(&gs->club_notify)) {
+        return; // Block other updates while notification is showing
+    }
+
+    wandering_enemies_update(gs->wandering_enemies, gs->wandering_enemy_count,
+                             gs->player_x, gs->player_y, gs->in_dialogue,
+                             delta_time, gs->map_width, gs->map_height);
+
+
+    // Update player attack cooldown
+    PlayerCombatStats stats = {
+        .x = gs->player_x,
+        .y = gs->player_y,
+        .hp = gs->player_hp,
+        .max_hp = gs->player_max_hp,
+        .level = gs->player_level,
+        .has_club = gs->has_club,
+        .attack_range = 80,
+        .attacking = false,
+        .attack_timer = 0,
+        .attack_cooldown = 0, // You need to track this separately
+        .facing_right = gs->facing_right
+    };
+
     // Determine if player is moving based on held keys
     gs->is_moving = gs->moving_left || gs->moving_right || 
                     gs->moving_up || gs->moving_down;
@@ -576,6 +624,10 @@ void game_screen_update(GameScreen *gs, float delta_time) {
     float nearest_dist_sq = 50.0f * 50.0f;  // interaction radius squared
     gs->player_near_npc = false;
     gs->active_npc_index = -1;
+
+    if (gs->club_notify_timer > 0.0f) {
+        gs->club_notify_timer -= delta_time;
+    }
 
     for (int i = 0; i < gs->npc_count; i++) {
         if (!gs->npcs[i].is_active) continue;
@@ -740,8 +792,8 @@ void dialogue_select_choice(GameScreen *gs, int choice) {
     
     printf("Player selected choice %d -> jumping to line %d\n", choice, next_line);
     
-    // Start battle music immediately when player chooses fight (choice 0)
-    if (choice == 0) {
+    /// Start battle music immediately when player chooses fight (choice 0)
+    if (choice == 0 && gs->active_npc_index == 0) {
         gs->play_battle_music_requested = true;
     }
     
@@ -805,8 +857,29 @@ void dialogue_update(GameScreen *gs, float delta_time, SDL_Renderer *renderer) {
     DialogueEntry *entry = dialogue_get_line(gs->current_script, gs->current_line_index);
     if (!entry) return;
     
+    // Check for club give command
+    if (entry->gives_club && !gs->has_club) {
+        if (!gs->has_club) {
+            gs->has_club = true;
+            club_notification_start(&gs->club_notify, renderer, gs->font_bold, gs->font, gs->font_small);
+        }
+        printf("Player obtained the club!\n");
+    }
+
     // Auto-advance if this is a command line (no text, not choice, not battle)
-    if (strlen(entry->text) == 0 && !entry->is_player_choice && !entry->triggers_battle) {
+    if ((strlen(entry->text) == 0 || strcmp(entry->text, "GOTO") == 0) && 
+    !entry->is_player_choice && !entry->triggers_battle) {
+        
+        // ===== ADD THIS: Process club give command =====
+        if (entry->gives_club && !gs->has_club) {
+            if (!gs->has_club) {
+                gs->has_club = true;
+                club_notification_start(&gs->club_notify, renderer, gs->font_bold, gs->font, gs->font_small);
+            }
+            printf("Player obtained the club!\n");
+        }
+        // ================================================
+        
         // Process any effects (like play_sfx) before advancing
         if (entry->play_sfx && strcmp(entry->sfx_name, "laugh") == 0) {
             printf("Laugh requested for line index %d\n", gs->current_line_index);
@@ -815,6 +888,7 @@ void dialogue_update(GameScreen *gs, float delta_time, SDL_Renderer *renderer) {
         if (entry->play_battle_music && !gs->play_battle_music_requested) {
             gs->play_battle_music_requested = true;
         }
+        
         // Advance to next line
         int next = entry->next_line;
         if (next >= 0 && next < gs->current_script->line_count) {
@@ -1320,6 +1394,22 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
         collision_render_debug(gs->collision, renderer, cam->x, cam->y, cam->zoom);
     #endif
 
+        // Render wandering enemies
+    wandering_enemies_render(renderer, gs->wandering_enemies, gs->wandering_enemy_count,
+                             gs->camera.x, gs->camera.y, gs->camera.zoom,
+                             gs->font_small);
+    
+    // Render player HUD
+    PlayerStats hud_stats = {
+        .hp = gs->player_hp,
+        .max_hp = gs->player_max_hp,
+        .level = gs->player_level,
+        .has_club = gs->has_club,
+        .attack_cooldown = 0 // Track this in your game state
+    };
+    player_hud_render(renderer, &hud_stats, gs->font_bold, gs->font,
+                      gs->camera.viewport_w, gs->camera.viewport_h);
+
     // ------------------------------------------------------------------------
     // Draw all NPCs
     // ------------------------------------------------------------------------
@@ -1345,7 +1435,7 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
         float npc_screen_x = (npc->x * cam->zoom) - cam->x;
         float npc_screen_y = (npc->y * cam->zoom) - cam->y;
         
-         // --------------------------------------------------------------------
+        // --------------------------------------------------------------------
         // Render NPC sprite - use guide texture for NPC 1, original for NPC 0
         // --------------------------------------------------------------------
         if (i == 1 && gs->guide_idle_texture) {
@@ -1513,6 +1603,32 @@ void game_screen_render(SDL_Renderer *renderer, GameScreen *gs) {
         SDL_RenderTextureRotated(renderer, current_texture, &src_sprite, &dst_sprite, 0.0, NULL, flip);
     }
 
+    // ADD CLUB NOTIFICATION
+    if (gs->club_notify_timer > 0.0f) {
+        float alpha = gs->club_notify_timer / 3.0f;
+        if (alpha > 1.0f) alpha = 1.0f;
+        
+        SDL_Color gold = {255, 215, 0, (Uint8)(255 * alpha)};
+        SDL_Surface *surf = TTF_RenderText_Blended(gs->font_bold, "Got Club!", 0, gold);
+        if (surf) {
+            SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
+            float w, h;
+            SDL_GetTextureSize(tex, &w, &h);
+            SDL_FRect rect = {
+                screen_x - w/2,
+                screen_y - sprite_size - 40,
+                w, h
+            };
+            SDL_RenderTexture(renderer, tex, NULL, &rect);
+            SDL_DestroyTexture(tex);
+            SDL_DestroySurface(surf);
+        }
+    }
+
+    // Render club notification (on top)
+    club_notification_render(renderer, &gs->club_notify, 
+                            gs->camera.viewport_w, gs->camera.viewport_h);
+                            
     // ------------------------------------------------------------------------
     // Draw arrow trail (if active)
     // ------------------------------------------------------------------------
@@ -1588,6 +1704,16 @@ void game_screen_handle_input(GameScreen *gs, SDL_KeyboardEvent *key) {
         return;
     }
 
+    // Check club notification first
+    if (club_notification_is_active(&gs->club_notify)) {
+        if (is_pressed && (key->scancode == SDL_SCANCODE_E || 
+                          key->scancode == SDL_SCANCODE_SPACE ||
+                          key->scancode == SDL_SCANCODE_RETURN)) {
+            club_notification_handle_input(&gs->club_notify);
+        }
+        return;
+    }
+
     // Movement keys – update flags for continuous movement
     switch (key->scancode) {
         case SDL_SCANCODE_D:
@@ -1643,7 +1769,27 @@ void game_screen_handle_input(GameScreen *gs, SDL_KeyboardEvent *key) {
                 }
             }
             break;
-            
+        
+        case SDL_SCANCODE_J:
+        case SDL_SCANCODE_SPACE:
+            if (is_pressed && gs->has_club && !gs->in_dialogue) {
+                PlayerCombatStats attack_stats = {
+                    .x = gs->player_x,
+                    .y = gs->player_y,
+                    .hp = gs->player_hp,
+                    .max_hp = gs->player_max_hp,
+                    .level = gs->player_level,
+                    .has_club = gs->has_club,
+                    .attack_range = 80,
+                    .attacking = false,
+                    .attack_timer = 0,
+                    .attack_cooldown = 0,
+                    .facing_right = gs->facing_right
+                };
+                player_attack(&attack_stats, gs->wandering_enemies, gs->wandering_enemy_count);
+            }
+            break;
+
         default:
             break;
     }
@@ -1659,6 +1805,13 @@ void game_screen_handle_mouse(GameScreen *gs, SDL_MouseButtonEvent *mouse, SDL_R
         dialogue_handle_mouse(gs, mouse, renderer);
         return;
     }
+
+    if (club_notification_is_active(&gs->club_notify)) {
+        if (mouse->type == SDL_EVENT_MOUSE_BUTTON_DOWN && mouse->button == SDL_BUTTON_LEFT) {
+            club_notification_handle_input(&gs->club_notify);
+        }
+        return;
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -1671,6 +1824,7 @@ void game_screen_destroy(GameScreen *gs) {
         if (gs->font) TTF_CloseFont(gs->font);
         if (gs->font_bold) TTF_CloseFont(gs->font_bold);
         if (gs->font_dialogue && gs->font_dialogue != gs->font) TTF_CloseFont(gs->font_dialogue);
+        if (gs->font_small && gs->font_small != gs->font) TTF_CloseFont(gs->font_small);
         if (gs->bg_texture) SDL_DestroyTexture(gs->bg_texture);
         if (gs->idle_texture) SDL_DestroyTexture(gs->idle_texture);
         if (gs->run_texture) SDL_DestroyTexture(gs->run_texture);

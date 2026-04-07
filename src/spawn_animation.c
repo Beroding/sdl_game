@@ -120,7 +120,7 @@ void spawn_animation_update(SpawnAnimation *anim, float delta_time) {
             if (t > 1.0f) t = 1.0f;
             
             // Original size
-            anim->beam_width = 20 + t * 60;  // 20 to 80 - ORIGINAL
+            anim->beam_width = 12 + t * 36;  // 20 to 80 - ORIGINAL
             // Higher starting opacity
             anim->beam_intensity = 0.7f + t * 0.3f;  // Start at 70% instead of 0%
             anim->beam_core_glow = 0.5f + t * 0.5f;  // Start at 50% instead of 0%
@@ -263,7 +263,8 @@ void spawn_animation_render(SDL_Renderer *renderer, SpawnAnimation *anim,
         
         // Outer glow - original size, higher opacity
         for (int i = 5; i >= 0; i--) {
-            float w = anim->beam_width * (1.5f + i * 0.5f);  // Original size
+            float w = anim->beam_width * (1.3f + i * 0.4f);
+            // float w = anim->beam_width * (1.5f + i * 0.5f);  // Original size
             SDL_SetRenderDrawColor(renderer, 
                 (Uint8)(100 + i * 20), 
                 (Uint8)(180 + i * 10), 
