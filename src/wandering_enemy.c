@@ -200,7 +200,7 @@ void wandering_enemies_render(SDL_Renderer *renderer, WanderingEnemy enemies[], 
             .h = BAT_FRAME_HEIGHT
         };
 
-        printf("Frame %d: src=(%f,%f %fx%f)\n", enemy->current_frame, src.x, src.y, src.w, src.h);
+        // printf("Frame %d: src=(%f,%f %fx%f)\n", enemy->current_frame, src.x, src.y, src.w, src.h);
         
         /* Destination on screen */
         SDL_FRect dst = {

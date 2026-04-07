@@ -1,5 +1,4 @@
 -------------------Musics-------------------
-Chopin - Waltz No.19 in A minor
-lorem
-lorem
-lorem
+(credit scene) Chopin - Waltz No.19 in A minor
+(menu theme) youtube
+(battle theme) youtube

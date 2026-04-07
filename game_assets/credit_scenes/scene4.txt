@@ -1,5 +1,6 @@
 ---------------Maps & Images---------------
-lorem
-lorem
-lorem
-lorem
+(menu screen) Lost Izalith - https://pin.it/6DGxcrRHo
+(map 1) hell dnd battle map - https://pin.it/41wY84pJS
+(some spritesheet) Universal LPC Spritesheet Generator 
+- 
+https://liberatedpixelcup.github.io/Universal-LPC-Spritesheet-Character-Generator/

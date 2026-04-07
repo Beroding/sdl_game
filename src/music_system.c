@@ -56,10 +56,10 @@ MusicSystem* music_system_create(void) {
         printf("  -> Make sure the file exists and SDL3_mixer decoders are installed\n");
     }
     
-    music->game_music = MIX_LoadAudio(music->mixer, "game_assets/music/exploration.ogg", false);
-    if (!music->game_music) {
-        printf("Warning: Could not load exploration.ogg: %s\n", SDL_GetError());
-    }
+    // music->game_music = MIX_LoadAudio(music->mixer, "game_assets/music/exploration.ogg", false);
+    // if (!music->game_music) {
+    //     printf("Warning: Could not load exploration.ogg: %s\n", SDL_GetError());
+    // }
     
     music->battle_music = MIX_LoadAudio(music->mixer, "game_assets/music/battle_theme.mp3", false);
     if (!music->battle_music) {
