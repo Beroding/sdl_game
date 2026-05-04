@@ -41,7 +41,7 @@
 // Animation speed: lower values = faster animation
 #define ANIMATION_SPEED 4.5            // Frames of game loop per sprite change
 #define MOVE_SPEED 1.2f                // World units per second
-#define ZOOM_LEVEL 5.0f                // Camera zoom (5x = closer to player)
+#define ZOOM_LEVEL 4.0f                // Camera zoom (5x = closer to player)
 #define CAMERA_SMOOTH 0.1f             // How quickly camera catches up to player
 
 // NPC sprite dimensions (pixels in source texture)
@@ -263,7 +263,7 @@ GameScreen *game_screen_create(SDL_Renderer *renderer, int window_width, int win
     }
 
     // Load the background map (static image of the game world)
-    SDL_Surface *surface = IMG_Load("game_assets/map_1.jpg");
+    SDL_Surface *surface = IMG_Load("game_assets/map_1.png");
     if (!surface) {
         fprintf(stderr, "Failed to load map: %s\n", SDL_GetError());
         // Fallback: create a blank dark surface the size of the window
